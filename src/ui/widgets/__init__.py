@@ -1,0 +1,1 @@
+"""Reusable PyQt widgets for cards, bidding, and DDS results."""

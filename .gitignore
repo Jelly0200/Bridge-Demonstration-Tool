@@ -1,0 +1,18 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Local Python environments
+.venv/
+.venv*/
+
+# Local application data and exported packages
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.bdtpack
+
+# Local editor and operating-system files
+.idea/
+.DS_Store

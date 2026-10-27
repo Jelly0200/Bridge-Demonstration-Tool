@@ -1,0 +1,1 @@
+"""Bridge Demonstration Tool application package."""

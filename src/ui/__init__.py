@@ -1,0 +1,1 @@
+"""PyQt user interface for the Bridge Demonstration Tool."""
