@@ -16,8 +16,8 @@ ENGLISH_TO_CHINESE = {
     "View: Hidden": "视图：隐藏",
     "Mode: Normal": "模式：普通",
     "Mode: Demonstration": "模式：演示",
-    "Start demonstration": "开始演示",
-    "End demonstration": "结束演示",
+    "Demonstrate": "演示",
+    "Stop": "停止",
     "Demonstration active": "演示进行中",
     "Rule: Label": "规则：标签",
     "Rule: Target": "规则：目标",
@@ -34,6 +34,7 @@ ENGLISH_TO_CHINESE = {
     "Next move": "下一步",
     "Reset": "重置",
     "Monitor": "监控",
+    "Robot card sound": "机器人出牌音效",
     "Control Toolbar": "控制工具栏",
     "Instructions": "使用说明",
     "Administrator:": "管理员：",
@@ -102,7 +103,7 @@ ENGLISH_TO_CHINESE = {
     "Scenarios included (select one or more):": "包含的场景（可多选）：",
     "Acceptable result stasis:": "可接受的结果差值：",
     "Remove selected stasis": "移除所选结果差值",
-    "Contracts are derived from the selected scenarios' final contracts. Enter the score for each contract and stasis.": "定约由所选场景的最终定约自动生成。请填写每种定约和结果差值对应的分数。",
+    "Each scenario has its own scoring rule, even when scenarios share the same contract. Enter a score for every scenario and stasis.": "每个场景都有独立的评分规则，即使场景使用相同定约也不例外。请填写每个场景及结果差值对应的分数。",
     "Invalid stasis": "结果差值无效",
     "Use = or a signed trick difference from -13 to +13.": "请输入 = 或 -13 到 +13 的带符号墩数差。",
     "Duplicate stasis": "结果差值重复",
@@ -199,6 +200,19 @@ ENGLISH_TO_CHINESE = {
     "Student and test assignments": "学生与测试分配",
     "Register a student": "注册学生",
     "Create student account": "创建学生账户",
+    "Change student password": "更改学生密码",
+    "Change password": "更改密码",
+    "Delete student account": "删除学生账户",
+    "New password:": "新密码：",
+    "Confirm password:": "确认密码：",
+    "The passwords do not match.": "两次输入的密码不一致。",
+    "Student password changed": "学生密码已更改",
+    "Student password changed.": "学生密码已更改。",
+    "Student account deleted": "学生账户已删除",
+    "Student account deleted. Its test assignments and results were permanently deleted.": "学生账户已删除，其测试分配和成绩记录也已永久删除。",
+    "Unable to change student password": "无法更改学生密码",
+    "Unable to delete student account": "无法删除学生账户",
+    "This permanently deletes the selected student account, all of its test assignments, and all test results. Continue?": "此操作将永久删除所选学生账户、其所有测试分配和成绩记录。是否继续？",
     "Assign test": "分配测试",
     "Remove selected assignment": "移除所选分配",
     "Completed": "已完成",
@@ -280,6 +294,8 @@ ENGLISH_TO_CHINESE = {
     "Run Test": "运行测试",
     "Explorer": "资源管理器",
     "Duplicate": "复制",
+    "Expand all": "全部展开",
+    "Collapse all": "全部折叠",
     "Move": "移动",
     "Move asset": "移动资源",
     "Choose a destination:": "请选择目标位置：",
@@ -292,6 +308,8 @@ ENGLISH_TO_CHINESE = {
     "This moves the selected asset and all descendants. Continue?": "此操作将移动所选资源及其所有子资源。是否继续？",
     "The asset is already in that location.": "此资源已经位于该位置。",
     "Choose a new parent and review the move before confirming.": "选择新的父级位置，并在确认前检查移动内容。",
+    "Expand every folder and its descendants in this asset tree.": "展开此资源树中的所有文件夹及其子项。",
+    "Collapse every folder in this asset tree.": "折叠此资源树中的所有文件夹。",
     "Information": "信息",
     "Information:": "信息：",
     "Logout": "退出登录",
@@ -302,7 +320,7 @@ ENGLISH_TO_CHINESE = {
     "Add a child asset (Insert key or right-click menu).": "添加子资源（Insert 键或右键菜单）。",
     "Edit or rename the selected asset (F2).": "编辑或重命名选中的资源（F2）。",
     "Delete the selected asset and its children (Delete).": "删除选中的资源及其子项（Delete）。",
-    "Right-click for asset actions. Keyboard shortcuts: Insert, F2, Delete.": "右键打开资源操作菜单。快捷键：Insert、F2、Delete。",
+    "Right-click for actions. Ctrl/Cmd + + or - resizes tree text; Ctrl/Cmd + 0 resets it.": "右键打开操作菜单。Ctrl/Cmd + + 或 - 可调整资源树文字大小；Ctrl/Cmd + 0 可重置。",
     "Select a scenario to view its key play signal.": "选择一个场景以查看其关键出牌信息。",
     "Double-click a scenario to display its deal and play signal.": "双击场景以显示牌局和出牌信息。",
     "No scenario is loaded. Double-click a scenario to display it.": "尚未加载场景。双击一个场景以显示内容。",
@@ -580,6 +598,13 @@ def show_message(parent, kind: str, title: str, text: str, *args):
         translate_text(text, language),
         *args,
     )
+
+
+def exec_and_delete(dialog: Any, *args, **kwargs):
+    try:
+        return dialog.exec(*args, **kwargs)
+    finally:
+        dialog.deleteLater()
 
 
 class BilingualTextController:

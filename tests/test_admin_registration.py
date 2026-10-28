@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -225,6 +226,55 @@ class TestAdminRegistration(unittest.TestCase):
         self.assertGreaterEqual(text_editor.width(), 460)
         self.assertIsNotNone(combo_editor)
         self.assertGreaterEqual(combo_editor.width(), 460)
+
+    def test_duplicate_asset_button_has_room_for_its_full_label(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        window.resize(1280, 800)
+        window.show()
+        QApplication.processEvents()
+
+        duplicate_button = window.btn_duplicate_asset
+        self.assertGreaterEqual(
+            duplicate_button.width(),
+            duplicate_button.sizeHint().width(),
+        )
+
+    def test_tree_controls_and_zoom_are_scoped_to_their_own_tree(self):
+        first_window = MainWindow()
+        second_window = MainWindow()
+        self.addCleanup(second_window.close)
+        self.addCleanup(first_window.close)
+
+        first_tree = first_window.tree_view
+        second_tree = second_window.tree_view
+        first_folder = QTreeWidgetItem(first_tree, ["First folder"])
+        QTreeWidgetItem(first_folder, ["First child"])
+        second_folder = QTreeWidgetItem(second_tree, ["Second folder"])
+        QTreeWidgetItem(second_folder, ["Second child"])
+
+        first_window.btn_expand_all_folders.click()
+        self.assertTrue(first_folder.isExpanded())
+        self.assertFalse(second_folder.isExpanded())
+
+        second_folder.setExpanded(True)
+        first_window.btn_collapse_all_folders.click()
+        self.assertFalse(first_folder.isExpanded())
+        self.assertTrue(second_folder.isExpanded())
+
+        QTest.keyClick(
+            first_tree,
+            Qt.Key.Key_Plus,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        self.assertIsNotNone(first_tree._tree_zoom_font_size_px)
+        self.assertIsNone(second_tree._tree_zoom_font_size_px)
+        QTest.keyClick(
+            first_tree,
+            Qt.Key.Key_0,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        self.assertIsNone(first_tree._tree_zoom_font_size_px)
 
     def test_asset_types_have_distinct_tree_icons_and_colors(self):
         tree = TreeView()

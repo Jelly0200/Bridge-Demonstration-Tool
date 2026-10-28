@@ -35,6 +35,10 @@ stored locally in SQLite.
 - Select any folder, case, board, or scenario and press **Duplicate** to copy it
   with its descendants, including scenario information and labels.
 
+- Use **Expand all** and **Collapse all** to manage folders in this asset tree.
+  Use **Ctrl/Cmd + +**, **Ctrl/Cmd + -**, or **Ctrl/Cmd + 0** to resize or reset
+  the tree text; these actions only affect this tree.
+
 - Use the **Administrator**, **Tool**, **Test**, and **Explorer** menus for
   account, application, test, and project-document actions. Use **Explorer** to
   read `README.md` and `requirements.txt`; asset actions remain in the asset tree.
@@ -112,8 +116,10 @@ In Demonstration mode, robots play the non-human seats using either the recorded
 Target sequence or Label rules. Choose Analysis or Hidden view to switch between
 a double-dummy perspective and a real-game perspective. In a Hidden-view
 demonstration, a human on the declaring side sees declarer and dummy face up. A
-human on defense sees their own hand and dummy face up; their partner's hand and
-declarer's hand are invisible.
+human on defense sees their own hand; dummy is revealed after they play their
+first card in the opening trick. Their partner's hand and declarer's hand are
+invisible. Robot plays are separated by a short pause. Toggle **Tool > Robot
+card sound** to enable or disable the card-play sound effect.
 
 A scenario's optional plain-text **Information** can be edited in **Settings**.
 It is shown to students during a test and remains linked to the scenario through
@@ -138,7 +144,9 @@ unsigned application state.
 - A test run plays one randomly selected candidate scenario per problem using
   Label rules and Hidden view. Student accounts are registered and tests
   assigned by an administrator. The result links to the student account and
-  the password is stored as a hash.
+  the password is stored as a hash. In **Test > Student management**,
+  administrators can change student passwords or permanently delete accounts;
+  deletion also removes the student's test assignments and result history.
 
 After each test scenario, the result and score are shown with a button to
 continue. The final test score and student ID are saved locally. **Test > Run
@@ -154,15 +162,17 @@ errors. It does not expose administrators' saved asset contents.
 ## Tests
 
 Sign in as an administrator and choose **Test construction** to create and
-manage tests. Each test supports a title, multiple problems, and a scoring
-matrix:
+manage tests. The asset tree remains visible for reference and can be expanded;
+selecting a node does not load or edit it. Each test supports a title, multiple
+problems, and a scoring matrix:
 
 - Each problem uses one administrator-selected case and one or more candidate
   scenarios from that case. A test run randomly selects one candidate per
   problem, so it does not run every candidate scenario.
-- Contract rows are generated from the distinct final contracts in the selected
-  scenarios. Administrators edit acceptable result stasis (such as **=**, **-1**,
-  **-2**, **+1**, or **+2**) and enter a score for each contract/stasis cell.
+- Each selected scenario has its own contract/stasis score rows, so scenarios
+  with the same contract can still receive different scores. Administrators
+  edit acceptable result stasis (such as **=**, **-1**, **-2**, **+1**, or **+2**)
+  and enter a score for every scenario/stasis cell.
 - The test-construction screen saves tests locally and lets administrators
   reopen, edit, and delete them.
 - Settings for a candidate scenario, including its auction, contract, doubling
@@ -203,6 +213,10 @@ DDS values are shown separately and are not translated.
 - 选择文件夹、牌例、牌局或场景并点击“复制”，可复制该资源及其子资源，
   包括场景信息和标签。
 
+- 使用“全部展开”和“全部折叠”管理此资源树中的文件夹。使用
+  **Ctrl/Cmd + +**、**Ctrl/Cmd + -** 或 **Ctrl/Cmd + 0** 可调整或重置资源树文字大小；
+  这些操作只影响当前资源树。
+
 - 使用“管理员”“工具”“测试”和“资源管理器”菜单执行账户、应用、测试和资源操作。
 - “管理员 > 导出管理员数据”可将当前管理员的工作区保存为单个加密 `.bdtpack` 文件。
   请设置并确认至少 12 个字符的独立加密口令并妥善保管；口令无法找回。
@@ -211,7 +225,8 @@ DDS values are shown separately and are not translated.
   管理员登录凭证不会导出。
 - “资源管理器”用于查看 `README.md` 和 `requirements.txt`；资源树中的添加、编辑、删除和复制操作仍在资源树中进行。
 - “工具 > 语言”会先打开语言选择窗口；“工具 > 键盘快捷键”会打开快捷键说明窗口。
-- “测试 > 学生管理”可由管理员注册学生账户并分配或移除测试；“管理员 > 学生登录”会自动启动学生锁定会话。“测试 > 查看测试结果”可查看提交记录；“测试 > 生成测试报告”可汇总成绩、题目表现和场景难度、列出前三名并导出 PDF。
+  “工具 > 机器人出牌音效”可切换演示中的机器人出牌音效。
+- “测试 > 学生管理”可由管理员注册学生账户、分配或移除测试、更改学生密码或永久删除账户；删除账户也会删除该学生的测试分配和成绩记录。“管理员 > 学生登录”会自动启动学生锁定会话。“测试 > 查看测试结果”可查看提交记录；“测试 > 生成测试报告”可汇总成绩、题目表现和场景难度、列出前三名并导出 PDF。
 - 中文界面下，“资源管理器 > 项目说明（README.md）”会打开中文说明；菜单仍只保留一个项目说明入口。
 - 练习构建页面右上角的红色叉号按钮可关闭页面。
 
@@ -267,8 +282,9 @@ Control 点击）可编辑标签。每种颜色的序号独立计算。以下顺
 
 在“演示”模式下，机器人会使用已记录的目标序列或标签规则操作非人类座位。选择“分析”或“隐藏”
 视图，可在双明手视角与真实牌局视角之间切换。在“隐藏”视图的演示中，人类座位属于庄家方时，
-庄家和明手的手牌正面朝上；人类座位属于防守方时，人类座位和明手正面朝上，其搭档与庄家的
-手牌不可见。
+庄家和明手的手牌正面朝上；人类座位属于防守方时，先只显示人类座位，用户在首墩打出第一张牌后
+才显示明手，其搭档与庄家的手牌不可见。机器人每次出牌后会稍作停顿；使用“工具 > 机器人出牌音效”
+可切换出牌音效。
 
 场景可包含可选的纯文本“信息”，可在“设置”中编辑。测试过程中会向学生显示该信息，
 并通过测试与场景的关联关系保留。
@@ -296,11 +312,13 @@ Control 点击）可编辑标签。每种颜色的序号独立计算。以下顺
 ## 测试
 
 以管理员身份登录后，选择“练习构建”即可创建和管理测试。每个测试支持标题、多个题目和评分矩阵：
+练习构建期间资源树仍可见并可展开，但选择资源节点不会加载或编辑资源。
 
 - 每道题使用管理员指定的一个牌例，并从该牌例中选择一个或多个候选场景。每次运行测试时，
   每道题只会随机选择一个候选场景，不会运行该题的全部候选场景。
-- 定约行根据所选场景中不同的最终定约自动生成。管理员可编辑可接受的结果差值（例如 **=**、**-1**、
-  **-2**、**+1** 或 **+2**），并为每个定约/结果差值单元格填写分数。
+- 每个所选场景都有独立的定约/结果差值评分行，因此即使多个场景的定约相同，也可设置不同分数。
+  管理员可编辑可接受的结果差值（例如 **=**、**-1**、**-2**、**+1** 或 **+2**），
+  并为每个场景/结果差值单元格填写分数。
 - 测试构建页面会将测试保存在本机，管理员可重新打开、编辑或删除测试。
 - 候选场景的叫牌、定约、加倍状态、标签和信息会从原场景加载到测试场景中。
 

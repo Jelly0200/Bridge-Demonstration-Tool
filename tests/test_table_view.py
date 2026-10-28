@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from PyQt6.QtCore import Qt
@@ -9,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QDialog
 from src.database.models.case_board import Board, BoardConfiguration
 from src.database.models.scenario import Label, Scenario
 from src.ui.views.table_view import TableView
+from src.ui.widgets.hand_widget import CardWidget
 
 
 class FirstLegalRobot:
@@ -66,7 +68,7 @@ class TestTableView(unittest.TestCase):
         self.assertEqual(self.table.game.current_player, "WEST")
         self.assertIn("1NT NONE", self.table.center_info.text())
         self.assertNotIn("Test board", self.table.center_info.text())
-        self.assertEqual(self.table.btn_demonstration.text(), "Start demonstration")
+        self.assertEqual(self.table.btn_demonstration.text(), "Demonstrate")
         self.assertTrue(self.table.btn_demonstration.isEnabled())
 
     def test_all_hands_use_the_same_card_size(self):
@@ -87,6 +89,133 @@ class TestTableView(unittest.TestCase):
             all((card.width(), card.height()) == (44, 62) for card in north_hand.cards)
         )
 
+    def test_playing_a_card_reuses_widgets_for_cards_still_in_each_hand(self):
+        scenario = Scenario(
+            id=1,
+            board_id=1,
+            bidding_route="1NT PASS PASS PASS",
+            declarer="SOUTH",
+            contract="1NT",
+        )
+        self.table.load_board(self.board, self.configuration, scenario)
+        retained_widgets = {
+            (seat, card.card_code): card
+            for seat, hand in self.table.hand_widgets.items()
+            for card in hand.cards
+            if not (seat == "WEST" and card.card_code == "S7")
+        }
+
+        self.table.on_card_selected("WEST", "S7")
+
+        self.assertNotIn(
+            "S7",
+            {
+                card.card_code
+                for card in self.table.hand_widgets["WEST"].cards
+            },
+        )
+        for (seat, card_code), widget in retained_widgets.items():
+            current_widget = next(
+                card
+                for card in self.table.hand_widgets[seat].cards
+                if card.card_code == card_code
+            )
+            self.assertIs(current_widget, widget)
+
+    def test_played_card_widgets_are_reused_in_a_centered_trick_area(self):
+        game = SimpleNamespace(
+            current_trick=[("SOUTH", "S2")],
+            completed_tricks=[],
+        )
+        self.table.game = game
+        self.table.show()
+        self.application.processEvents()
+
+        for card_code in ("S2", "S3", "S4", "S5"):
+            game.current_trick = [("SOUTH", card_code)]
+            self.table._render_played_cards()
+
+        widgets = self.table.played_card_area.findChildren(CardWidget)
+        self.assertEqual(len(widgets), 1)
+        self.assertIs(widgets[0], self.table.played_card_widgets["SOUTH"])
+        self.assertEqual(widgets[0].card_code, "S5")
+        self.assertEqual(
+            self.table.played_cards_grid.getItemPosition(
+                self.table.played_cards_grid.indexOf(widgets[0])
+            )[:2],
+            (2, 1),
+        )
+        game.current_trick = [
+            ("SOUTH", "S2"),
+            ("WEST", "H2"),
+            ("NORTH", "D2"),
+            ("EAST", "C2"),
+        ]
+        self.table._render_played_cards()
+        expected_positions = {
+            "SOUTH": (2, 1),
+            "WEST": (1, 0),
+            "NORTH": (0, 1),
+            "EAST": (1, 2),
+        }
+        self.assertEqual(
+            {
+                seat: self.table.played_cards_grid.getItemPosition(
+                    self.table.played_cards_grid.indexOf(widget)
+                )[:2]
+                for seat, widget in self.table.played_card_widgets.items()
+            },
+            expected_positions,
+        )
+        center = self.table.played_card_area.rect().center()
+        card_centers = {
+            seat: widget.mapTo(
+                self.table.played_card_area,
+                widget.rect().center(),
+            )
+            for seat, widget in self.table.played_card_widgets.items()
+        }
+        self.assertEqual(card_centers["NORTH"].x(), center.x())
+        self.assertEqual(card_centers["SOUTH"].x(), center.x())
+        self.assertEqual(card_centers["WEST"].y(), center.y())
+        self.assertEqual(card_centers["EAST"].y(), center.y())
+        self.table.trick_grid.activate()
+        area_center = self.table.played_card_area.geometry().center()
+        table_center = self.table.trick_area.rect().center()
+        self.assertLessEqual(abs(area_center.x() - table_center.x()), 1)
+        self.assertLessEqual(abs(area_center.y() - table_center.y()), 1)
+
+    def test_played_card_widget_reuse_preserves_each_suit_color(self):
+        self.table.game = SimpleNamespace(
+            current_trick=[("SOUTH", "H2")],
+            completed_tricks=[],
+        )
+        self.table._render_played_cards()
+        widget = self.table.played_card_widgets["SOUTH"]
+
+        self.table.game.current_trick = [("SOUTH", "S3")]
+        self.table._render_played_cards()
+
+        self.assertIs(self.table.played_card_widgets["SOUTH"], widget)
+        self.assertEqual(
+            widget.rank_label.styleSheet(),
+            "color: #1a1a1a; background: transparent;",
+        )
+        self.assertEqual(
+            widget.card_label.styleSheet(),
+            "color: #1a1a1a; background: transparent;",
+        )
+
+    def test_robot_card_sound_can_be_toggled(self):
+        with patch("src.ui.views.table_view.QSoundEffect.play") as play:
+            self.table._play_robot_card_sound()
+            play.assert_called_once()
+
+            self.table.set_robot_card_sound_enabled(False)
+            self.table._play_robot_card_sound()
+
+        play.assert_called_once()
+
     def test_board_only_center_shows_a_prompt_instead_of_board_details(self):
         self.table.load_board(self.board, self.configuration)
 
@@ -95,6 +224,12 @@ class TestTableView(unittest.TestCase):
         self.assertNotIn("Test board", center_text)
         self.assertNotIn("Dealer:", center_text)
         self.assertNotIn("Vulnerability:", center_text)
+
+    def test_record_target_button_is_in_the_top_bar(self):
+        self.assertGreaterEqual(
+            self.table.top_bar_layout.indexOf(self.table.btn_record),
+            0,
+        )
 
     def test_hidden_view_removes_concealed_cards_and_restores_them(self):
         scenario = Scenario(
@@ -142,13 +277,14 @@ class TestTableView(unittest.TestCase):
         self.table.set_lockdown_mode(False)
         self.assertFalse(self.table.btn_view_mode.isHidden())
 
-    def test_dds_matrix_is_flush_with_the_table_view_right_and_bottom_edges(self):
+    def test_dds_matrix_is_flush_with_the_view_and_footer_layout_edges(self):
         self.table.show()
         self.application.processEvents()
 
         matrix_rect = self.table.dds_result_table.geometry()
+        footer_item_rect = self.table.footer_layout.itemAt(4).geometry()
         self.assertEqual(matrix_rect.right() + 1, self.table.width())
-        self.assertEqual(matrix_rect.bottom() + 1, self.table.height())
+        self.assertEqual(matrix_rect.bottom() + 1, footer_item_rect.bottom() + 1)
 
     def test_empty_scenario_keeps_play_features_disabled(self):
         scenario = Scenario(id=1, board_id=1)
@@ -185,7 +321,7 @@ class TestTableView(unittest.TestCase):
         QTest.qWait(self.table.ROBOT_MOVE_DELAY_MS + 60)
 
         self.assertEqual(self.table.current_mode, "DEMONSTRATION")
-        self.assertEqual(self.table.btn_demonstration.text(), "End demonstration")
+        self.assertEqual(self.table.btn_demonstration.text(), "Stop")
         self.assertTrue(self.table.btn_demonstration.isEnabled())
         self.assertEqual(emitted_modes, ["DEMONSTRATION"])
         self.assertFalse(self.table.btn_side.isEnabled())
@@ -237,11 +373,11 @@ class TestTableView(unittest.TestCase):
 
         self.table.btn_demonstration.click()
         self.assertEqual(self.table.current_mode, "DEMONSTRATION")
-        self.assertEqual(self.table.btn_demonstration.text(), "End demonstration")
+        self.assertEqual(self.table.btn_demonstration.text(), "Stop")
 
         self.table.btn_demonstration.click()
         self.assertEqual(self.table.current_mode, "NORMAL")
-        self.assertEqual(self.table.btn_demonstration.text(), "Start demonstration")
+        self.assertEqual(self.table.btn_demonstration.text(), "Demonstrate")
         self.assertTrue(self.table.btn_side.isEnabled())
         self.assertTrue(self.table.btn_dds_display.isEnabled())
 
@@ -320,7 +456,7 @@ class TestTableView(unittest.TestCase):
         QTest.qWait(self.table.ROBOT_MOVE_DELAY_MS + 60)
 
     def _wait_for_completed_trick(self):
-        for _ in range(150):
+        for _ in range(400):
             if self.table.game.completed_tricks:
                 break
             QTest.qWait(20)
@@ -428,7 +564,14 @@ class TestTableView(unittest.TestCase):
         self._prepare_robot_demonstration("WEST")
         self.table.toggle_view_mode()
 
-        for seat in ("NORTH", "WEST"):
+        for seat in ("NORTH",):
+            self.assertTrue(
+                all(
+                    card.is_hidden
+                    for card in self.table.hand_widgets[seat].cards
+                )
+            )
+        for seat in ("WEST",):
             self.assertTrue(
                 all(
                     not card.is_hidden
@@ -439,6 +582,16 @@ class TestTableView(unittest.TestCase):
             self.assertTrue(
                 all(card.is_hidden for card in self.table.hand_widgets[seat].cards)
             )
+
+        west_card = self.table.game.get_legal_cards("WEST")[0]
+        self.table.on_card_selected("WEST", west_card)
+
+        self.assertTrue(
+            all(
+                not card.is_hidden
+                for card in self.table.hand_widgets["NORTH"].cards
+            )
+        )
 
     def test_target_recording_flushes_sequence_and_analysis_undo_reverts_moves(self):
         scenario = Scenario(
@@ -506,6 +659,8 @@ class TestTableView(unittest.TestCase):
         self.assertEqual(card.dds_label.text(), "6")
         self.assertEqual(card.rank_label.font().pointSize(), 14)
         self.assertEqual(card.card_label.font().pointSize(), 30)
+        self.assertEqual(card.dds_label.font().pointSize(), 7)
+        self.assertEqual(card.dds_label.width(), 22)
         self.assertLess(card.rank_label.y(), card.height() // 3)
         self.assertGreater(card.dds_label.y(), card.height() // 2)
         self.assertLessEqual(card.rank_label.geometry().bottom(), card.height())
@@ -528,7 +683,7 @@ class TestTableView(unittest.TestCase):
         self.assertEqual(card.sequence_label.text(), "3")
         self.assertEqual(
             card.sequence_label.font().pointSize(),
-            card.dds_label.font().pointSize(),
+            10,
         )
         self.assertGreaterEqual(
             card.sequence_label.height(),
@@ -766,7 +921,12 @@ class TestTableView(unittest.TestCase):
         self.table.robot = FirstLegalRobot(self.table)
         self.assertTrue(self.table.set_mode("DEMONSTRATION"))
 
-        QTest.qWait(self.table.ROBOT_MOVE_DELAY_MS + 30)
+        for _ in range(
+            (self.table.ROBOT_MOVE_DELAY_MS + 1000) // 20
+        ):
+            if self.table.robot_animation is not None:
+                break
+            QTest.qWait(20)
 
         self.assertEqual(self.table.game.current_player, "NORTH")
         self.assertIsNotNone(self.table.robot_animation)
@@ -940,19 +1100,21 @@ class TestTableView(unittest.TestCase):
             "Final result: 4HXX=",
         )
 
-    def test_center_message_keeps_its_size_and_grid_position_during_play(self):
+    def test_center_message_is_separate_from_centered_played_cards(self):
         self.table.load_board(self.board, self.configuration)
         QApplication.processEvents()
-        initial_geometry = self.table.center_info.geometry()
 
         self.table._play_card("WEST", "S7")
         self.table._render_played_cards()
         self.table.center_info.setText("Several lines of changing status text.")
         self.table._render_played_cards()
 
-        self.assertEqual(self.table.center_info.geometry(), initial_geometry)
         self.assertEqual(
             self.table.center_info.parentWidget(),
+            self.table,
+        )
+        self.assertIs(
+            self.table.played_card_area.parentWidget(),
             self.table.trick_area,
         )
 

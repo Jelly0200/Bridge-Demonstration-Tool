@@ -25,7 +25,12 @@ from PyQt6.QtWidgets import (
 )
 
 from src.database.repository import Repository
-from src.ui.i18n import BilingualTextController, show_message, translate_text
+from src.ui.i18n import (
+    BilingualTextController,
+    exec_and_delete,
+    show_message,
+    translate_text,
+)
 
 
 DEFAULT_STASIS = ["=", "-1", "-2", "+1", "+2"]
@@ -88,8 +93,8 @@ class TestProblemDialog(QDialog):
 
         layout.addWidget(
             QLabel(
-                "Contracts are derived from the selected scenarios' final contracts. "
-                "Enter the score for each contract and stasis."
+                "Each scenario has its own scoring rule, even when scenarios "
+                "share the same contract. Enter a score for every scenario and stasis."
             )
         )
         self.contract_status_label = QLabel()
@@ -155,6 +160,13 @@ class TestProblemDialog(QDialog):
 
     def _derived_contracts(self):
         contracts = []
+        for _scenario_id, _scenario_name, contract in self._scenario_rows():
+            if contract not in contracts:
+                contracts.append(contract)
+        return contracts
+
+    def _scenario_rows(self):
+        rows = []
         for scenario in self._selected_scenarios():
             contract = scenario["contract"].strip().upper()
             if not contract:
@@ -162,39 +174,42 @@ class TestProblemDialog(QDialog):
                     f"{scenario['name']} has no final contract. "
                     "Complete and save its auction first."
                 )
-            if contract not in contracts:
-                contracts.append(contract)
-        return contracts
+            rows.append((scenario["id"], scenario["name"], contract))
+        return rows
 
     def _current_scores(self):
         scores = {}
-        contracts = [
-            self.matrix.verticalHeaderItem(row).text()
-            for row in range(self.matrix.rowCount())
-            if self.matrix.verticalHeaderItem(row)
-        ]
         stasis = [
             self.matrix.horizontalHeaderItem(column).text()
             for column in range(self.matrix.columnCount())
             if self.matrix.horizontalHeaderItem(column)
         ]
-        for row, contract in enumerate(contracts):
-            scores[contract] = {}
+        for row in range(self.matrix.rowCount()):
+            header = self.matrix.verticalHeaderItem(row)
+            if header is None:
+                continue
+            metadata = header.data(Qt.ItemDataRole.UserRole)
+            if not metadata:
+                continue
+            scenario_id, contract = metadata
+            scores[scenario_id] = {contract: {}}
             for column, result in enumerate(stasis):
                 item = self.matrix.item(row, column)
-                scores[contract][result] = item.text() if item else "0"
+                scores[scenario_id][contract][result] = (
+                    item.text() if item else "0"
+                )
         return scores
 
     def _refresh_matrix(self, *_args, scores=None):
         self._commit_active_matrix_edit()
         previous_scores = scores if scores is not None else self._current_scores()
-        contracts = []
+        scenario_rows = []
         warning = ""
         try:
-            contracts = self._derived_contracts()
+            scenario_rows = self._scenario_rows()
         except ValueError as error:
             warning = str(error)
-        if not contracts and not warning:
+        if not scenario_rows and not warning:
             warning = "Select at least one scenario from the case."
         language = (
             self.language_controller.language
@@ -203,20 +218,34 @@ class TestProblemDialog(QDialog):
         )
         self.contract_status_label.setText(translate_text(warning, language))
         stasis = self._stasis_values()
-        self.matrix.setRowCount(len(contracts))
+        self.matrix.setRowCount(len(scenario_rows))
         self.matrix.setColumnCount(len(stasis))
         for column, result in enumerate(stasis):
             self.matrix.setHorizontalHeaderItem(
                 column,
                 QTableWidgetItem(result),
             )
-        for row, contract in enumerate(contracts):
+        for row, (scenario_id, scenario_name, contract) in enumerate(
+            scenario_rows
+        ):
+            scenario_scores = previous_scores.get(scenario_id)
+            if not isinstance(scenario_scores, dict):
+                scenario_scores = previous_scores.get(str(scenario_id), {})
+            contract_scores = scenario_scores.get(contract)
+            if not isinstance(contract_scores, dict):
+                contract_scores = previous_scores.get(contract, {})
             self.matrix.setVerticalHeaderItem(
                 row,
-                QTableWidgetItem(contract),
+                QTableWidgetItem(
+                    f"{scenario_name} — {contract} (#{scenario_id})"
+                ),
+            )
+            self.matrix.verticalHeaderItem(row).setData(
+                Qt.ItemDataRole.UserRole,
+                (scenario_id, contract),
             )
             for column, result in enumerate(stasis):
-                value = previous_scores.get(contract, {}).get(result, "0")
+                value = contract_scores.get(result, "0")
                 item = QTableWidgetItem(str(value))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setFlags(
@@ -324,14 +353,21 @@ class TestProblemDialog(QDialog):
         scenario_ids = set(problem.get("scenario_ids", []))
         self._populate_scenarios(selected_ids=scenario_ids)
         self._set_stasis(problem.get("results") or DEFAULT_STASIS)
-        self._refresh_matrix(scores=problem.get("scores") or {})
+        self._refresh_matrix(
+            scores=(
+                problem.get("scenario_scores")
+                or problem.get("scores")
+                or {}
+            )
+        )
 
     def _problem_data(self):
+        self._commit_active_matrix_edit()
         case_id = self.case_combo.currentData()
         if case_id is None:
             raise ValueError("Choose a case for this problem.")
-        selected_scenarios = self._selected_scenarios()
-        scenario_ids = [scenario["id"] for scenario in selected_scenarios]
+        scenario_rows = self._scenario_rows()
+        scenario_ids = [scenario_id for scenario_id, _, _ in scenario_rows]
         if not scenario_ids:
             raise ValueError("Select at least one scenario from the case.")
         contracts = self._derived_contracts()
@@ -345,24 +381,32 @@ class TestProblemDialog(QDialog):
         if len(normalized_stasis) != len(set(normalized_stasis)):
             raise ValueError("Result stasis values must be unique.")
 
-        scores = {}
-        for row, contract in enumerate(contracts):
-            scores[contract] = {}
+        scenario_scores = {}
+        legacy_scores = {}
+        for row, (scenario_id, _scenario_name, contract) in enumerate(
+            scenario_rows
+        ):
+            contract_scores = {}
             for column, result in enumerate(normalized_stasis):
                 item = self.matrix.item(row, column)
                 try:
-                    scores[contract][result] = int(item.text().strip()) if item else 0
+                    contract_scores[result] = (
+                        int(item.text().strip()) if item else 0
+                    )
                 except ValueError as error:
                     raise ValueError(
                         f"Score for {contract} / {result} must be a whole number."
                     ) from error
+            scenario_scores[scenario_id] = {contract: contract_scores}
+            legacy_scores.setdefault(contract, contract_scores)
         return {
             "source_type": "case",
             "case_id": case_id,
             "scenario_ids": scenario_ids,
             "contracts": contracts,
             "results": normalized_stasis,
-            "scores": scores,
+            "scores": legacy_scores,
+            "scenario_scores": scenario_scores,
         }
 
     def _accept_problem(self):
@@ -559,7 +603,8 @@ class TestConstructionView(QWidget):
         )
         if self.language_controller is not None:
             self.language_controller.install(dialog)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        result = exec_and_delete(dialog)
+        if result != QDialog.DialogCode.Accepted:
             return None
         return dialog.problem
 

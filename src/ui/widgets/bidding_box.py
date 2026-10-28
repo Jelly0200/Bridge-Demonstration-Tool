@@ -148,6 +148,7 @@ class BiddingBoxDialog(QDialog):
         seat_order = [self.dealer]
         for _ in range(3):
             seat_order.append(PLAYER_NEXT[seat_order[-1]])
+        self.auction_table.clearContents()
         self.auction_table.setColumnCount(4)
         self.auction_table.setHorizontalHeaderLabels(seat_order)
         rows = (len(self.bidding_history) + 3) // 4

@@ -1,15 +1,23 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QCoreApplication, QEvent, QTimer, Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QAbstractItemView, QHeaderView
-from PyQt6.QtWidgets import QApplication, QLineEdit
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QHeaderView,
+    QMessageBox,
+    QLineEdit,
+)
 
 from src.database.db_manager import DatabaseManager
 from src.database.repository import Repository
+from src.ui.i18n import BilingualTextController, exec_and_delete
 from src.ui.main_window import (
     MainWindow,
     StudentManagementDialog,
@@ -158,6 +166,65 @@ class TestConstructionRepository(unittest.TestCase):
         self.assertEqual(updated["problems"][0]["contracts"], ["3NT"])
         self.assertEqual(updated["problems"][0]["scores"]["3NT"]["="], 7)
 
+    def test_saves_a_distinct_rule_for_each_scenario_in_a_problem(self):
+        first_scenario = self.repo.get_scenario_by_id(self.scenario_ids[0])
+        same_contract_scenario_id = self.repo.create_scenario(
+            first_scenario.board_id,
+            "",
+            "SOUTH",
+            "4H",
+            "NONE",
+            0,
+            "[]",
+            name="Scenario 3",
+        )
+        test_id = self.repo.save_test(
+            self.admin_id,
+            "Scenario scoring",
+            [
+                {
+                    "source_type": "case",
+                    "case_id": self.case_id,
+                    "scenario_ids": [
+                        self.scenario_ids[0],
+                        same_contract_scenario_id,
+                    ],
+                    "contracts": ["4H"],
+                    "results": ["="],
+                    "scenario_scores": {
+                        self.scenario_ids[0]: {"4H": {"=": 10}},
+                        same_contract_scenario_id: {"4H": {"=": 20}},
+                    },
+                }
+            ],
+        )
+
+        problem = self.repo.get_tests_by_admin(self.admin_id)[0]["problems"][0]
+        self.assertEqual(
+            problem["scenario_scores"][self.scenario_ids[0]]["4H"]["="],
+            10,
+        )
+        self.assertEqual(
+            problem["scenario_scores"][same_contract_scenario_id]["4H"]["="],
+            20,
+        )
+        conn = self.db.get_connection()
+        try:
+            rule_ids = [
+                row["RuleId"]
+                for row in conn.execute(
+                    """
+                    SELECT RuleId FROM Test_Scenario
+                    WHERE TestId = ? ORDER BY Id
+                    """,
+                    (test_id,),
+                )
+            ]
+        finally:
+            conn.close()
+        self.assertEqual(len(rule_ids), 2)
+        self.assertEqual(len(set(rule_ids)), 2)
+
     def test_rejects_scenarios_owned_by_another_administrator(self):
         other_admin_id = self.repo.create_admin("other_author", "secure password")
         other_folder_id = self.repo.create_folder(
@@ -266,9 +333,13 @@ class TestConstructionRepository(unittest.TestCase):
             [{"scenario_id": self.scenario_ids[0], "score": 10}],
             10,
         )
-        result = self.db.get_connection().execute(
-            "SELECT StudentId, ApplicantName FROM Test_Result"
-        ).fetchone()
+        connection = self.db.get_connection()
+        try:
+            result = connection.execute(
+                "SELECT StudentId, ApplicantName FROM Test_Result"
+            ).fetchone()
+        finally:
+            connection.close()
         self.assertEqual(result["StudentId"], student_id)
         self.assertEqual(result["ApplicantName"], "Ada Student")
         self.assertEqual(self.repo.get_available_tests_for_student(student_id), [])
@@ -355,11 +426,68 @@ class TestConstructionRepository(unittest.TestCase):
         self.assertEqual(results.results_table.item(0, 1).text(), "Managed Student")
         self.assertEqual(results.results_table.item(0, 2).text(), "Managed quiz")
 
+    def test_student_management_can_change_password_and_delete_account_history(self):
+        student_id = self.repo.create_student("Managed Student", "student passphrase")
+        test_id = self.repo.save_test(
+            self.admin_id,
+            "Managed quiz",
+            [
+                {
+                    "source_type": "case",
+                    "case_id": self.case_id,
+                    "scenario_ids": [self.scenario_ids[0]],
+                    "contracts": ["4H"],
+                    "results": ["="],
+                    "scores": {"4H": {"=": 10}},
+                }
+            ],
+        )
+        self.repo.assign_test_to_student(self.admin_id, student_id, test_id)
+        self.repo.save_test_result(
+            test_id,
+            student_id,
+            [{"scenario_id": self.scenario_ids[0], "score": 10}],
+            10,
+        )
+        management = StudentManagementDialog(self.repo, self.admin_id)
+        self.addCleanup(management.close)
+
+        self.assertTrue(management.change_password_button.isEnabled())
+        self.assertTrue(management.delete_student_button.isEnabled())
+        with (
+            patch("src.ui.main_window.StudentPasswordDialog") as password_dialog,
+            patch("src.ui.main_window.show_message"),
+        ):
+            password_dialog.return_value.exec.return_value = (
+                QDialog.DialogCode.Accepted
+            )
+            password_dialog.return_value.new_password = "new passphrase"
+            management.change_password_button.click()
+
+        self.assertIsNone(self.repo.authenticate_student(student_id, "student passphrase"))
+        self.assertEqual(
+            self.repo.authenticate_student(student_id, "new passphrase"),
+            {"id": student_id, "name": "Managed Student"},
+        )
+
+        with patch(
+            "src.ui.main_window.show_message",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            management.delete_student_button.click()
+
+        self.assertEqual(self.repo.get_students(), [])
+        self.assertEqual(self.repo.get_student_test_assignments(self.admin_id), [])
+        self.assertEqual(self.repo.get_available_tests_for_student(student_id), [])
+        results = TestResultsDialog(self.repo, self.admin_id)
+        self.addCleanup(results.close)
+        self.assertEqual(results.results_table.rowCount(), 0)
+
     def test_problem_dialog_derives_contracts_and_reads_stasis_scores(self):
         assets = self.repo.get_test_assets_by_admin(self.admin_id)
         editor = TestProblemDialog(assets)
         self.assertEqual(editor.matrix.rowCount(), 2)
-        self.assertEqual(editor.matrix.verticalHeaderItem(1).text(), "3NT")
+        self.assertIn("— 3NT", editor.matrix.verticalHeaderItem(1).text())
         editor.scenario_list.item(1).setCheckState(Qt.CheckState.Unchecked)
         editor.matrix.item(0, 0).setText("25")
         problem = editor._problem_data()
@@ -370,6 +498,134 @@ class TestConstructionRepository(unittest.TestCase):
         self.assertEqual(problem["contracts"], ["4H"])
         self.assertEqual(problem["results"], ["=", "-1", "-2", "+1", "+2"])
         self.assertEqual(problem["scores"]["4H"]["="], 25)
+
+    def test_problem_matrix_keeps_same_contract_scenarios_separate(self):
+        first_scenario = self.repo.get_scenario_by_id(self.scenario_ids[0])
+        same_contract_scenario_id = self.repo.create_scenario(
+            first_scenario.board_id,
+            "",
+            "SOUTH",
+            "4H",
+            "NONE",
+            0,
+            "[]",
+            name="Scenario 3",
+        )
+        editor = TestProblemDialog(
+            self.repo.get_test_assets_by_admin(self.admin_id)
+        )
+        self.addCleanup(editor.close)
+        editor.scenario_list.item(1).setCheckState(Qt.CheckState.Unchecked)
+        self.assertEqual(editor.matrix.rowCount(), 2)
+        self.assertTrue(
+            all(
+                "— 4H" in editor.matrix.verticalHeaderItem(row).text()
+                for row in range(editor.matrix.rowCount())
+            )
+        )
+        editor.matrix.item(0, 0).setText("10")
+        editor.matrix.item(1, 0).setText("20")
+
+        problem = editor._problem_data()
+
+        self.assertEqual(
+            problem["scenario_scores"][self.scenario_ids[0]]["4H"]["="],
+            10,
+        )
+        self.assertEqual(
+            problem["scenario_scores"][same_contract_scenario_id]["4H"]["="],
+            20,
+        )
+
+    def test_test_construction_keeps_asset_tree_expandable_but_inert(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        window.active_admin_id = self.admin_id
+        window.active_case_id = None
+        window.tree_view.load_tree_data(self.admin_id)
+        with patch.object(window, "_save_active_scenario"):
+            window.set_mode("TEST")
+        self.application.processEvents()
+
+        tree = window.tree_view
+        self.assertTrue(tree.isEnabled())
+        self.assertEqual(
+            tree.selectionMode(),
+            QAbstractItemView.SelectionMode.NoSelection,
+        )
+        folder_item = tree.topLevelItem(0)
+        self.assertGreater(folder_item.childCount(), 0)
+        tree.collapseItem(folder_item)
+        tree.expandItem(folder_item)
+        self.assertTrue(folder_item.isExpanded())
+
+        case_item = folder_item.child(0)
+        window.tree_view.setCurrentItem(case_item)
+        self.assertIsNone(window.active_case_id)
+        scenario_item = case_item.child(0).child(0)
+        window.tree_view.on_item_double_clicked(scenario_item, 0)
+        self.assertIsNone(window.table_view.scenario)
+
+    def test_test_result_uses_the_selected_scenarios_scoring_rule(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        scenario_id = 12
+        problem = {
+            "scores": {"4H": {"=": 7}},
+            "scenario_scores": {
+                scenario_id: {"4H": {"=": 42}},
+            },
+        }
+        window.lockdown_active = True
+        window.lockdown_current_problem = problem
+        window.lockdown_scenario_index = 0
+        window.lockdown_scenarios = [
+            {"scenario_id": scenario_id, "problem": problem}
+        ]
+        window.lockdown_results = []
+        window.lockdown_score = 0
+        window.table_view.game = SimpleNamespace(
+            declarer="SOUTH",
+            tricks_won={
+                "NORTH": 10,
+                "SOUTH": 0,
+                "EAST": 0,
+                "WEST": 0,
+            },
+        )
+        window.table_view.scenario = SimpleNamespace(
+            id=scenario_id,
+            contract="4H",
+            information="",
+        )
+
+        with (
+            patch("src.ui.main_window.TestScenarioDialog") as result_dialog,
+            patch.object(window, "_start_next_test_scenario"),
+        ):
+            result_dialog.return_value.exec.return_value = (
+                QDialog.DialogCode.Accepted
+            )
+            window._on_lockdown_scenario_completed()
+
+        self.assertEqual(window.lockdown_score, 42)
+        self.assertEqual(window.lockdown_results[0]["score"], 42)
+
+    def test_exec_and_delete_releases_closed_modal_widgets(self):
+        controller = BilingualTextController()
+        for _ in range(10):
+            dialog = QDialog()
+            controller.install(dialog)
+            QTimer.singleShot(0, dialog.accept)
+            self.assertEqual(
+                exec_and_delete(dialog),
+                QDialog.DialogCode.Accepted,
+            )
+            QCoreApplication.sendPostedEvents(
+                None,
+                QEvent.Type.DeferredDelete,
+            )
+        self.assertEqual(controller._tracked, {})
 
     def test_problem_score_matrix_uses_equal_row_and_column_sizes(self):
         editor = TestProblemDialog(
@@ -412,6 +668,27 @@ class TestConstructionRepository(unittest.TestCase):
         problem = editor._problem_data()
         self.assertEqual(problem["scores"]["4H"]["="], 25)
         self.assertEqual(problem["scores"]["4H"]["+3"], 0)
+
+    def test_problem_save_commits_active_score_edit(self):
+        editor = TestProblemDialog(
+            self.repo.get_test_assets_by_admin(self.admin_id)
+        )
+        self.addCleanup(editor.close)
+        editor.show()
+        self.application.processEvents()
+
+        score_item = editor.matrix.item(0, 0)
+        editor.matrix.editItem(score_item)
+        self.application.processEvents()
+        score_editor = editor.matrix.findChild(QLineEdit)
+        self.assertIsNotNone(score_editor)
+        score_editor.selectAll()
+        QTest.keyClicks(score_editor, "25")
+        self.assertEqual(score_item.text(), "0")
+
+        editor._accept_problem()
+
+        self.assertEqual(editor.problem["scores"]["4H"]["="], 25)
 
     def test_changing_case_combo_repopulates_scenarios_from_signal_index(self):
         second_case_id = self.repo.create_case(

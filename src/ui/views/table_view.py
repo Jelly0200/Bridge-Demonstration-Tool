@@ -1,5 +1,6 @@
 import copy
 import json
+from pathlib import Path
 from typing import Any, Optional
 
 from PyQt6.QtCore import (
@@ -8,8 +9,10 @@ from PyQt6.QtCore import (
     QRect,
     QTimer,
     Qt,
+    QUrl,
     pyqtSignal,
 )
+from PyQt6.QtMultimedia import QSoundEffect
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QGridLayout,
@@ -32,7 +35,12 @@ from src.ui.widgets.bidding_box import BiddingBoxDialog
 from src.ui.widgets.hand_widget import CardWidget, HandWidget
 from src.ui.dialogs.label_color_dialog import LabelColorDialog
 from src.ui.dialogs.test_scenario_dialog import TestScenarioDialog
-from src.ui.i18n import BilingualTextController, show_message, translate_text
+from src.ui.i18n import (
+    BilingualTextController,
+    exec_and_delete,
+    show_message,
+    translate_text,
+)
 from config.constants import RANKS, SUITS
 
 
@@ -67,8 +75,8 @@ class TableView(QWidget):
     DDS_STRAINS = ("S", "H", "D", "C", "NT")
     DDS_TRUMPS = {"S": 0, "H": 1, "D": 2, "C": 3, "NT": 4}
     DDS_MATRIX_SEATS = ("NORTH", "SOUTH", "WEST", "EAST")
-    ROBOT_MOVE_DELAY_MS = 260
-    ROBOT_CARD_ANIMATION_MS = 220
+    ROBOT_MOVE_DELAY_MS = 1200
+    ROBOT_CARD_ANIMATION_MS = 320
 
     def __init__(
         self,
@@ -110,6 +118,16 @@ class TableView(QWidget):
         self.robot_timer.timeout.connect(self._play_next_robot_move)
         self.robot_animation: Optional[QPropertyAnimation] = None
         self.robot_animation_destination: Optional[QWidget] = None
+        self.robot_card_sound_enabled = True
+        self.robot_card_sound = QSoundEffect(self)
+        sound_path = (
+            Path(__file__).resolve().parents[3]
+            / "assets"
+            / "sounds"
+            / "robot_card.wav"
+        )
+        self.robot_card_sound.setSource(QUrl.fromLocalFile(str(sound_path)))
+        self.robot_card_sound.setVolume(0.35)
         self.init_ui()
         self.language_controller.install(self)
 
@@ -140,7 +158,7 @@ class TableView(QWidget):
         self.btn_mode.setEnabled(False)
         top_bar_layout.addWidget(self.btn_mode)
 
-        self.btn_demonstration = QPushButton("Start demonstration")
+        self.btn_demonstration = QPushButton("Demonstrate")
         self.btn_demonstration.setStyleSheet(
             "background-color: #2e8b57; color: white; font-weight: bold;"
         )
@@ -150,6 +168,10 @@ class TableView(QWidget):
         self.btn_rule_mode = QPushButton("Rule: Label")
         self.btn_rule_mode.clicked.connect(self.toggle_rule_mode)
         top_bar_layout.addWidget(self.btn_rule_mode)
+        self.btn_record = QPushButton("Record target")
+        self.btn_record.clicked.connect(self.toggle_target_recording)
+        self.btn_record.setEnabled(False)
+        top_bar_layout.addWidget(self.btn_record)
         top_bar_layout.addStretch()
 
         self.btn_rotate = QPushButton("Rotate view")
@@ -197,31 +219,39 @@ class TableView(QWidget):
         self.trick_area = QWidget()
         self.trick_grid = QGridLayout(self.trick_area)
         self.trick_grid.setContentsMargins(0, 0, 0, 0)
-        self.trick_grid.setSpacing(2)
+        self.trick_grid.setSpacing(0)
+        self.trick_grid.setRowStretch(0, 1)
+        self.trick_grid.setColumnStretch(0, 1)
+        self.played_card_area = QWidget(self.trick_area)
+        self.played_card_area.setFixedSize(164, 224)
+        self.played_cards_grid = QGridLayout(self.played_card_area)
+        self.played_cards_grid.setContentsMargins(0, 0, 0, 0)
+        self.played_cards_grid.setSpacing(4)
+        for index in range(3):
+            self.played_cards_grid.setRowStretch(index, 1)
+            self.played_cards_grid.setColumnStretch(index, 1)
+        self.trick_grid.addWidget(
+            self.played_card_area,
+            0,
+            0,
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
         self.center_info = QLabel(
             "Select a scenario to view its key play signal.",
-            self.trick_area,
+            self,
         )
         self.center_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.center_info.setFixedSize(160, 96)
+        self.center_info.setMinimumHeight(36)
         self.center_info.setWordWrap(True)
         self.center_info.setStyleSheet(
             "background-color: #242831; border: 1px solid #323846; "
-            "border-radius: 8px; padding: 8px; color: #f5f7fa;"
+            "border-radius: 8px; padding: 4px; color: #f5f7fa;"
         )
         self.trick_area.setFixedSize(268, 244)
-        self.trick_grid.setColumnMinimumWidth(0, 52)
-        self.trick_grid.setColumnMinimumWidth(1, 160)
-        self.trick_grid.setColumnMinimumWidth(2, 52)
-        self.trick_grid.setRowMinimumHeight(0, 72)
-        self.trick_grid.setRowMinimumHeight(1, 96)
-        self.trick_grid.setRowMinimumHeight(2, 72)
-        self._position_center_info()
+        self.trick_grid.activate()
         self.played_card_widgets = {}
-        for row in range(3):
-            self.trick_grid.setRowStretch(row, 1)
-        for column in range(3):
-            self.trick_grid.setColumnStretch(column, 1)
+        self._played_card_widget_pool = {}
+        layout.addWidget(self.center_info)
 
         for row in range(3):
             self.table_grid.setRowStretch(row, 1)
@@ -298,10 +328,6 @@ class TableView(QWidget):
         layout.addLayout(footer_layout)
         self._clear_dds_result_matrix()
 
-        self.btn_record = QPushButton("Record target")
-        self.btn_record.clicked.connect(self.toggle_target_recording)
-        self.btn_record.setEnabled(False)
-        layout.insertWidget(1, self.btn_record)
         self._place_seats()
         self._render_played_cards()
         self._update_dds_visibility()
@@ -309,7 +335,14 @@ class TableView(QWidget):
         self._update_lockdown_controls()
 
     def load_board(
-        self, board, configuration, scenario=None, labels=None, *, force_robot=False
+        self,
+        board,
+        configuration,
+        scenario=None,
+        labels=None,
+        *,
+        force_robot=False,
+        test_playback=False,
     ):
         """Load a saved board and, optionally, a scenario onto the table."""
         if configuration is None:
@@ -359,6 +392,7 @@ class TableView(QWidget):
         self.board = board
         self.configuration = configuration
         self.scenario = scenario
+        self.test_playback_active = test_playback
         self._completion_emitted = False
         self.labels = normalized_labels
         self.current_mode = "NORMAL"
@@ -642,7 +676,11 @@ class TableView(QWidget):
             hand_widget = self.hand_widgets[seat]
             hand_widget.set_hand(cards)
             for card_widget in hand_widget.cards:
-                card_label = labels_by_card.get(card_widget.card_code)
+                card_label = (
+                    None
+                    if self.test_playback_active
+                    else labels_by_card.get(card_widget.card_code)
+                )
                 card_widget.set_label_color(
                     card_label.get("Color", "NONE")
                     if card_label
@@ -786,11 +824,10 @@ class TableView(QWidget):
         return declarer_tricks - contract_target
 
     def _render_played_cards(self):
-        for widget in self.played_card_widgets.values():
-            self.trick_grid.removeWidget(widget)
-            widget.deleteLater()
+        for widget in self._played_card_widget_pool.values():
+            self.played_cards_grid.removeWidget(widget)
+            widget.hide()
         self.played_card_widgets = {}
-        self._position_center_info()
         if not self.game:
             return
 
@@ -809,25 +846,23 @@ class TableView(QWidget):
             relative_position = (
                 self.SEATS_CLOCKWISE.index(seat) - perspective_index
             ) % 4
-            card_widget = CardWidget(
-                card_code,
-                self.trick_area,
-                large=True,
-            )
-            self.trick_grid.addWidget(
+            card_widget = self._played_card_widget_pool.get(seat)
+            if card_widget is None:
+                card_widget = CardWidget(
+                    card_code,
+                    self.played_card_area,
+                    large=True,
+                )
+                self._played_card_widget_pool[seat] = card_widget
+            else:
+                card_widget.set_card_code(card_code)
+            self.played_cards_grid.addWidget(
                 card_widget,
                 *positions[relative_position],
                 alignment=Qt.AlignmentFlag.AlignCenter,
             )
             self.played_card_widgets[seat] = card_widget
-
-    def _position_center_info(self):
-        if not hasattr(self, "center_info"):
-            return
-        x = max(0, (self.trick_area.width() - self.center_info.width()) // 2)
-        y = max(0, (self.trick_area.height() - self.center_info.height()) // 2)
-        self.center_info.move(x, y)
-        self.center_info.raise_()
+            card_widget.show()
 
     def _apply_view_mode(self):
         conceal_opponents = (
@@ -844,7 +879,17 @@ class TableView(QWidget):
                     seat for seat in declarer_side
                     if seat != self.game.declarer
                 )
-                visible_seats = {self.current_side, dummy}
+                first_trick = (
+                    self.game.completed_tricks[0]
+                    if self.game.completed_tricks
+                    else self.game.current_trick
+                )
+                dummy_revealed = any(
+                    seat == self.current_side for seat, _ in first_trick
+                )
+                visible_seats = {self.current_side}
+                if dummy_revealed:
+                    visible_seats.add(dummy)
             hidden_seats = set(self.SEATS_CLOCKWISE) - visible_seats
 
         for seat, hand in self.hand_widgets.items():
@@ -926,7 +971,7 @@ class TableView(QWidget):
                 language=language,
                 parent=self,
             )
-            dialog.exec()
+            exec_and_delete(dialog)
             return
         dialog = BiddingBoxDialog(
             self.bidding_route.copy(),
@@ -936,7 +981,7 @@ class TableView(QWidget):
             parent=self,
         )
         self.language_controller.install(dialog)
-        if dialog.exec():
+        if exec_and_delete(dialog):
             saved_mode = self.current_mode
             saved_rule = self.rule_mode
             saved_side = self.current_side
@@ -954,6 +999,7 @@ class TableView(QWidget):
                     and saved_mode == "DEMONSTRATION"
                     and saved_rule == "LABEL"
                 ),
+                test_playback=self.test_playback_active,
             )
             if self.lockdown_mode and saved_mode == "DEMONSTRATION":
                 self.current_side = saved_side
@@ -1086,7 +1132,7 @@ class TableView(QWidget):
             sequence_counts=sequence_counts,
         )
         self.language_controller.install(dialog)
-        if not dialog.exec():
+        if not exec_and_delete(dialog):
             return
         self._set_card_label(
             card,
@@ -1244,9 +1290,9 @@ class TableView(QWidget):
         )
         self.btn_mode.setEnabled(False)
         self.btn_demonstration.setText(
-            "End demonstration"
+            "Stop"
             if mode == "DEMONSTRATION"
-            else "Start demonstration"
+            else "Demonstrate"
         )
         if mode == "DEMONSTRATION" and self.scenario and not self.scenario.is_targeted:
             self._advance_robots()
@@ -1404,6 +1450,7 @@ class TableView(QWidget):
             return
 
         self._render_hands()
+        self._play_robot_card_sound()
         destination_widget = self.played_card_widgets.get(player)
         if source_rect is not None and destination_widget is not None:
             self._animate_robot_card(card, source_rect, destination_widget)
@@ -1413,19 +1460,29 @@ class TableView(QWidget):
         if self._robots_should_play():
             self.robot_timer.start(self.ROBOT_MOVE_DELAY_MS)
 
+    def set_robot_card_sound_enabled(self, enabled: bool):
+        self.robot_card_sound_enabled = bool(enabled)
+
+    def _play_robot_card_sound(self):
+        if self.robot_card_sound_enabled:
+            self.robot_card_sound.play()
+
     def _animate_robot_card(
         self,
         card: str,
         source_rect: QRect,
         destination_widget: QWidget,
     ):
-        destination_position = destination_widget.mapTo(self, QPoint(0, 0))
+        self.trick_grid.activate()
+        self.played_cards_grid.activate()
+        destination_position = destination_widget.mapTo(
+            self,
+            destination_widget.rect().center(),
+        )
         overlay = CardWidget(card, self)
         end_rect = QRect(
-            destination_position.x()
-            + (destination_widget.width() - overlay.width()) // 2,
-            destination_position.y()
-            + (destination_widget.height() - overlay.height()) // 2,
+            destination_position.x() - overlay.width() // 2,
+            destination_position.y() - overlay.height() // 2,
             overlay.width(),
             overlay.height(),
         )
@@ -1654,9 +1711,9 @@ class TableView(QWidget):
             )
         )
         self.btn_demonstration.setText(
-            "End demonstration"
+            "Stop"
             if is_demonstration
-            else "Start demonstration"
+            else "Demonstrate"
         )
         self._update_navigation()
 

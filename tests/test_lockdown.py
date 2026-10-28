@@ -163,6 +163,14 @@ class TestLockdown(unittest.TestCase):
             self.window.table_view.labels,
             [{"Sequence": 1, "Color": "RED", "Card": "SA"}],
         )
+        self.assertTrue(
+            all(
+                card.label_color == "NONE"
+                and card.label_sequence is None
+                for hand in self.window.table_view.hand_widgets.values()
+                for card in hand.cards
+            )
+        )
 
         dialogs = []
 

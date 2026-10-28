@@ -122,6 +122,42 @@ class Repository:
         finally:
             conn.close()
 
+    def update_student_password(self, student_id: int, password: str) -> None:
+        if len(password) < 8:
+            raise ValueError("Student passwords must contain at least 8 characters.")
+        conn = self.db.get_connection()
+        try:
+            with conn:
+                cursor = conn.execute(
+                    "UPDATE Student SET Password = ? WHERE Id = ?",
+                    (hash_password(password), student_id),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError(f"Student {student_id} was not found.")
+        finally:
+            conn.close()
+
+    def delete_student_account(self, student_id: int) -> None:
+        conn = self.db.get_connection()
+        try:
+            with conn:
+                student = conn.execute(
+                    "SELECT Id FROM Student WHERE Id = ?", (student_id,)
+                ).fetchone()
+                if student is None:
+                    raise LookupError(f"Student {student_id} was not found.")
+                conn.execute(
+                    "DELETE FROM Test_Result WHERE StudentId = ?",
+                    (student_id,),
+                )
+                cursor = conn.execute(
+                    "DELETE FROM Student WHERE Id = ?", (student_id,)
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError(f"Student {student_id} was not found.")
+        finally:
+            conn.close()
+
     def authenticate_student(self, student_id: int, password: str) -> Optional[dict]:
         conn = self.db.get_connection()
         try:
@@ -418,9 +454,9 @@ class Repository:
                 ).fetchall()
                 problems_by_sequence = {}
                 for row in problem_rows:
+                    rule_data = json.loads(row["Rules"])
                     problem = problems_by_sequence.get(row["Sequence"])
                     if problem is None:
-                        rule_data = json.loads(row["Rules"])
                         problem = {
                             "sequence": row["Sequence"],
                             "source_type": "case",
@@ -428,12 +464,24 @@ class Repository:
                             "scenario_ids": [],
                             "scenario_bidding_routes": {},
                             "scenario_information": {},
-                            "contracts": json.loads(row["Contracts"]),
+                            "contracts": [],
                             "results": rule_data.get("results", ["="]),
-                            "scores": rule_data.get("scores", {}),
+                            "scores": {},
+                            "scenario_scores": {},
                         }
                         problems_by_sequence[row["Sequence"]] = problem
                     problem["scenario_ids"].append(row["ScenarioId"])
+                    scenario_rule_scores = rule_data.get("scores", {})
+                    problem["scenario_scores"][row["ScenarioId"]] = (
+                        scenario_rule_scores
+                    )
+                    for contract in json.loads(row["Contracts"]):
+                        if contract not in problem["contracts"]:
+                            problem["contracts"].append(contract)
+                        problem["scores"].setdefault(
+                            contract,
+                            scenario_rule_scores.get(contract, {}),
+                        )
                     problem["scenario_bidding_routes"][row["ScenarioId"]] = (
                         row["BiddingRoute"]
                     )
@@ -919,7 +967,8 @@ class Repository:
                         "scenarios' final contracts."
                     )
                 results = [str(value).strip() for value in problem["results"]]
-                scores = problem["scores"]
+                scores = problem.get("scores", {})
+                scenario_scores = problem.get("scenario_scores")
                 if not contracts or any(not value for value in contracts):
                     raise ValueError(f"Problem {sequence} needs acceptable contracts.")
                 if not results or any(not value for value in results):
@@ -939,40 +988,60 @@ class Repository:
                     raise ValueError(
                         f"Problem {sequence} has duplicate matrix headings."
                     )
+                if (
+                    scenario_scores is not None
+                    and not isinstance(scenario_scores, dict)
+                ):
+                    raise ValueError(
+                        f"Problem {sequence} has an invalid scoring matrix."
+                    )
+
+                normalized_scenario_scores = {}
                 try:
-                    normalized_scores = {
-                        contract: {
-                            result: int(scores[contract][result])
-                            for result in results
+                    for scenario_id in scenario_ids:
+                        contract = contracts_by_scenario[scenario_id]
+                        if scenario_scores is None:
+                            scenario_contract_scores = scores
+                        else:
+                            scenario_contract_scores = scenario_scores.get(
+                                scenario_id,
+                                scenario_scores.get(str(scenario_id)),
+                            )
+                            if not isinstance(scenario_contract_scores, dict):
+                                raise ValueError
+                        normalized_scenario_scores[scenario_id] = {
+                            contract: {
+                                result: int(
+                                    scenario_contract_scores[contract][result]
+                                )
+                                for result in results
+                            }
                         }
-                        for contract in contracts
-                    }
                 except (KeyError, TypeError, ValueError) as error:
                     raise ValueError(
                         f"Problem {sequence} has an invalid scoring matrix."
                     ) from error
 
-                rule_data = {
-                    "source_type": source_type,
-                    "case_id": case_id,
-                    "results": results,
-                    "scores": normalized_scores,
-                }
-                cursor.execute(
-                    "INSERT INTO Rule (Contracts, Rules) VALUES (?, ?)",
-                    (json.dumps(contracts), json.dumps(rule_data)),
-                )
-                rule_id = cursor.lastrowid
-                cursor.executemany(
-                    """
-                    INSERT INTO Test_Scenario (TestId, Sequence, ScenarioId, RuleId)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    [
-                        (test_id, sequence, scenario_id, rule_id)
-                        for scenario_id in scenario_ids
-                    ],
-                )
+                for scenario_id in scenario_ids:
+                    contract = contracts_by_scenario[scenario_id]
+                    rule_data = {
+                        "source_type": source_type,
+                        "case_id": case_id,
+                        "results": results,
+                        "scores": normalized_scenario_scores[scenario_id],
+                    }
+                    cursor.execute(
+                        "INSERT INTO Rule (Contracts, Rules) VALUES (?, ?)",
+                        (json.dumps([contract]), json.dumps(rule_data)),
+                    )
+                    rule_id = cursor.lastrowid
+                    cursor.execute(
+                        """
+                        INSERT INTO Test_Scenario (TestId, Sequence, ScenarioId, RuleId)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (test_id, sequence, scenario_id, rule_id),
+                    )
             conn.commit()
             return test_id
         except Exception:

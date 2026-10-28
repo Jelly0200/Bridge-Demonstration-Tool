@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QHeaderView,
     QHBoxLayout,
     QInputDialog,
@@ -51,6 +52,7 @@ from src.ui.dialogs.test_scenario_dialog import TestScenarioDialog
 from src.ui.dialogs.test_report_dialog import TestReportDialog
 from src.ui.i18n import (
     BilingualTextController,
+    exec_and_delete,
     show_message,
     translate_text,
 )
@@ -210,6 +212,51 @@ class StudentRegistrationDialog(QDialog):
         self.accept()
 
 
+class StudentPasswordDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.new_password = ""
+        self.setWindowTitle("Change student password")
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.password_input = QLineEdit(self)
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm_password_input = QLineEdit(self)
+        self.confirm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("New password:", self.password_input)
+        form.addRow("Confirm password:", self.confirm_password_input)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._accept_password)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept_password(self):
+        password = self.password_input.text()
+        if len(password) < 8:
+            show_message(
+                self,
+                "warning",
+                "Unable to change student password",
+                "Student passwords must contain at least 8 characters.",
+            )
+            return
+        if password != self.confirm_password_input.text():
+            show_message(
+                self,
+                "warning",
+                "Unable to change student password",
+                "The passwords do not match.",
+            )
+            return
+        self.new_password = password
+        self.accept()
+
+
 class KeyboardShortcutsDialog(QDialog):
     def __init__(self, language: str = "en", parent=None):
         super().__init__(parent)
@@ -223,6 +270,9 @@ class KeyboardShortcutsDialog(QDialog):
                 "Insert — 添加子资源\n"
                 "F2 — 编辑或重命名所选资源\n"
                 "Delete — 删除所选资源及其子资源\n"
+                "Ctrl/Cmd + + — 放大资源树文字\n"
+                "Ctrl/Cmd + - — 缩小资源树文字\n"
+                "Ctrl/Cmd + 0 — 重置资源树文字大小\n"
                 "右键单击 — 打开所选资源的上下文菜单"
             )
         else:
@@ -230,6 +280,9 @@ class KeyboardShortcutsDialog(QDialog):
                 "Insert — Add a child asset\n"
                 "F2 — Edit or rename the selected asset\n"
                 "Delete — Delete the selected asset and its descendants\n"
+                "Ctrl/Cmd + + — Increase asset-tree text size\n"
+                "Ctrl/Cmd + - — Decrease asset-tree text size\n"
+                "Ctrl/Cmd + 0 — Reset asset-tree text size\n"
                 "Right-click — Open the selected asset's context menu"
             )
         layout.addWidget(shortcuts)
@@ -270,12 +323,23 @@ class StudentManagementDialog(QDialog):
         self.resize(760, 560)
         layout = QVBoxLayout(self)
 
+        account_actions = QHBoxLayout()
         self.register_button = QPushButton("Create student account", self)
         self.register_button.clicked.connect(self._register_student)
-        layout.addWidget(self.register_button)
+        account_actions.addWidget(self.register_button)
+        self.change_password_button = QPushButton("Change password", self)
+        self.change_password_button.clicked.connect(self._change_student_password)
+        account_actions.addWidget(self.change_password_button)
+        self.delete_student_button = QPushButton("Delete student account", self)
+        self.delete_student_button.clicked.connect(self._delete_student_account)
+        account_actions.addWidget(self.delete_student_button)
+        layout.addLayout(account_actions)
 
         assignment_form = QHBoxLayout()
         self.student_combo = QComboBox(self)
+        self.student_combo.currentIndexChanged.connect(
+            self._update_student_action_buttons
+        )
         self.test_combo = QComboBox(self)
         self.assign_button = QPushButton("Assign test", self)
         self.assign_button.clicked.connect(self._assign_test)
@@ -349,13 +413,19 @@ class StudentManagementDialog(QDialog):
                     (assignment["student_id"], assignment["test_id"]),
                 )
                 self.assignment_table.setItem(row, column, item)
+        self._update_student_action_buttons()
+
+    def _update_student_action_buttons(self, *_args):
+        has_student = self.student_combo.currentData() is not None
+        self.change_password_button.setEnabled(has_student)
+        self.delete_student_button.setEnabled(has_student)
 
     def _register_student(self):
         dialog = StudentRegistrationDialog(self.repo, self)
         owner = self.parentWidget()
         if owner is not None and hasattr(owner, "_prepare_dialog"):
             dialog = owner._prepare_dialog(dialog)
-        if not dialog.exec():
+        if not exec_and_delete(dialog):
             return
         show_message(
             self,
@@ -364,6 +434,65 @@ class StudentManagementDialog(QDialog):
             f"Student ID: {dialog.student_id}",
         )
         self.refresh()
+
+    def _change_student_password(self):
+        student_id = self.student_combo.currentData()
+        if student_id is None:
+            return
+        dialog = StudentPasswordDialog(self)
+        owner = self.parentWidget()
+        if owner is not None and hasattr(owner, "_prepare_dialog"):
+            dialog = owner._prepare_dialog(dialog)
+        if exec_and_delete(dialog) != QDialog.DialogCode.Accepted:
+            return
+        try:
+            self.repo.update_student_password(student_id, dialog.new_password)
+        except (LookupError, ValueError, sqlite3.Error) as error:
+            show_message(
+                self,
+                "warning",
+                "Unable to change student password",
+                str(error),
+            )
+            return
+        show_message(
+            self,
+            "information",
+            "Student password changed",
+            "Student password changed.",
+        )
+
+    def _delete_student_account(self):
+        student_id = self.student_combo.currentData()
+        if student_id is None:
+            return
+        confirmed = show_message(
+            self,
+            "question",
+            "Delete student account",
+            "This permanently deletes the selected student account, all of its test assignments, and all test results. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.repo.delete_student_account(student_id)
+        except (LookupError, sqlite3.Error) as error:
+            show_message(
+                self,
+                "warning",
+                "Unable to delete student account",
+                str(error),
+            )
+            return
+        self.refresh()
+        show_message(
+            self,
+            "information",
+            "Student account deleted",
+            "Student account deleted. Its test assignments and results were permanently deleted.",
+        )
 
     def _assign_test(self):
         student_id = self.student_combo.currentData()
@@ -645,33 +774,53 @@ class MainWindow(QMainWindow):
         self.search_box.setPlaceholderText("Search folders, cases, boards, scenarios")
         left_layout.addWidget(self.search_box)
 
-        asset_actions = QHBoxLayout()
+        asset_actions = QGridLayout()
+        asset_actions.setHorizontalSpacing(4)
+        asset_actions.setVerticalSpacing(4)
         self.btn_add_asset = QPushButton("Add")
         self.btn_add_asset.setToolTip("Add a child asset (Insert key or right-click menu).")
         self.btn_add_asset.clicked.connect(self.add_asset)
-        asset_actions.addWidget(self.btn_add_asset)
+        asset_actions.addWidget(self.btn_add_asset, 0, 0)
         self.btn_edit_asset = QPushButton("Edit")
         self.btn_edit_asset.setToolTip("Edit or rename the selected asset (F2).")
         self.btn_edit_asset.clicked.connect(self.edit_asset)
-        asset_actions.addWidget(self.btn_edit_asset)
+        asset_actions.addWidget(self.btn_edit_asset, 0, 1)
         self.btn_delete_asset = QPushButton("Delete")
         self.btn_delete_asset.setToolTip("Delete the selected asset and its children (Delete).")
         self.btn_delete_asset.clicked.connect(self.delete_asset)
-        asset_actions.addWidget(self.btn_delete_asset)
+        asset_actions.addWidget(self.btn_delete_asset, 0, 2)
         self.btn_duplicate_asset = QPushButton("Duplicate")
         self.btn_duplicate_asset.clicked.connect(self.duplicate_asset)
-        asset_actions.addWidget(self.btn_duplicate_asset)
+        asset_actions.addWidget(self.btn_duplicate_asset, 1, 0, 1, 2)
         self.btn_move_asset = QPushButton("Move")
         self.btn_move_asset.setToolTip(
             "Choose a new parent and review the move before confirming."
         )
         self.btn_move_asset.clicked.connect(self.move_asset)
-        asset_actions.addWidget(self.btn_move_asset)
+        asset_actions.addWidget(self.btn_move_asset, 1, 2)
+        for column in range(3):
+            asset_actions.setColumnStretch(column, 1)
         left_layout.addLayout(asset_actions)
 
         self.tree_view = TreeView()
+        tree_view_actions = QHBoxLayout()
+        self.btn_expand_all_folders = QPushButton("Expand all")
+        self.btn_expand_all_folders.setToolTip(
+            "Expand every folder and its descendants in this asset tree."
+        )
+        self.btn_expand_all_folders.clicked.connect(self.tree_view.expandAll)
+        tree_view_actions.addWidget(self.btn_expand_all_folders)
+        self.btn_collapse_all_folders = QPushButton("Collapse all")
+        self.btn_collapse_all_folders.setToolTip(
+            "Collapse every folder in this asset tree."
+        )
+        self.btn_collapse_all_folders.clicked.connect(self.tree_view.collapseAll)
+        tree_view_actions.addWidget(self.btn_collapse_all_folders)
+        left_layout.addLayout(tree_view_actions)
+
         self.tree_view.setToolTip(
-            "Right-click for asset actions. Keyboard shortcuts: Insert, F2, Delete."
+            "Right-click for actions. Ctrl/Cmd + + or - resizes tree text; "
+            "Ctrl/Cmd + 0 resets it."
         )
         self.tree_view.node_selected.connect(self.on_asset_selected)
         self.tree_view.node_double_clicked.connect(self.on_asset_double_clicked)
@@ -822,6 +971,14 @@ class MainWindow(QMainWindow):
 
         self.tool_menu = bar.addMenu("Tool")
         self.action_monitor = self.tool_menu.addAction("Monitor", self.open_monitor)
+        self.action_robot_card_sound = self.tool_menu.addAction(
+            "Robot card sound"
+        )
+        self.action_robot_card_sound.setCheckable(True)
+        self.action_robot_card_sound.setChecked(True)
+        self.action_robot_card_sound.toggled.connect(
+            self.set_robot_card_sound_enabled
+        )
         self.tool_menu.addAction("Instruction", self.open_instructions)
         self.tool_menu.addAction("Language", self.choose_language)
         self.tool_menu.addAction(
@@ -866,6 +1023,9 @@ class MainWindow(QMainWindow):
     def toggle_language(self):
         self.choose_language()
 
+    def set_robot_card_sound_enabled(self, enabled: bool):
+        self.table_view.set_robot_card_sound_enabled(enabled)
+
     def choose_language(self):
         labels = ["English", "中文"]
         current_index = 0 if self.language == "en" else 1
@@ -902,7 +1062,7 @@ class MainWindow(QMainWindow):
         dialog = self._prepare_dialog(
             KeyboardShortcutsDialog(self.language, self)
         )
-        dialog.exec()
+        exec_and_delete(dialog)
 
     def show_project_document(self, filename: str):
         allowed_files = {"README.md", "requirements.txt"}
@@ -929,7 +1089,7 @@ class MainWindow(QMainWindow):
                 self,
             )
         )
-        dialog.exec()
+        exec_and_delete(dialog)
 
     def export_admin_data(self):
         if self.active_admin_id is None:
@@ -1077,7 +1237,7 @@ class MainWindow(QMainWindow):
             )
             return
         dialog = self._prepare_dialog(StudentRegistrationDialog(self.repo, self))
-        if dialog.exec():
+        if exec_and_delete(dialog):
             show_message(
                 self,
                 "information",
@@ -1096,7 +1256,7 @@ class MainWindow(QMainWindow):
             dialog = self._prepare_dialog(
                 StudentManagementDialog(self.repo, self.active_admin_id, self)
             )
-            dialog.exec()
+            exec_and_delete(dialog)
         except sqlite3.Error as error:
             self._show_asset_error(error)
 
@@ -1104,7 +1264,7 @@ class MainWindow(QMainWindow):
         if self.lockdown_active:
             return
         dialog = self._prepare_dialog(StudentLoginDialog(self.repo, self))
-        if not dialog.exec():
+        if not exec_and_delete(dialog):
             return
         student = dialog.authenticated_student
         self.lockdown_student_id = student["id"]
@@ -1152,7 +1312,7 @@ class MainWindow(QMainWindow):
             dialog = self._prepare_dialog(
                 TestResultsDialog(self.repo, self.active_admin_id, self)
             )
-            dialog.exec()
+            exec_and_delete(dialog)
         except sqlite3.Error as error:
             self._show_asset_error(error)
 
@@ -1172,7 +1332,7 @@ class MainWindow(QMainWindow):
                     self,
                 )
             )
-            dialog.exec()
+            exec_and_delete(dialog)
         except (LookupError, ValueError, sqlite3.Error) as error:
             show_message(
                 self,
@@ -1218,7 +1378,12 @@ class MainWindow(QMainWindow):
         if is_test_mode:
             self.test_construction_view.set_admin_id(self.active_admin_id)
         self.search_box.setEnabled(not is_test_mode)
-        self.tree_view.setEnabled(not is_test_mode)
+        self.tree_view.setEnabled(True)
+        self.tree_view.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection
+            if is_test_mode
+            else QAbstractItemView.SelectionMode.SingleSelection
+        )
         self.btn_add_asset.setEnabled(not is_test_mode and self.active_admin_id is not None)
         self.btn_edit_asset.setEnabled(
             not is_test_mode and self._selected_asset() is not None
@@ -1248,7 +1413,7 @@ class MainWindow(QMainWindow):
 
     def on_login_clicked(self):
         dialog = self._prepare_dialog(LoginDialog(self))
-        if dialog.exec() and dialog.authenticated_admin:
+        if exec_and_delete(dialog) and dialog.authenticated_admin:
             admin = dialog.authenticated_admin
             self._activate_admin(admin.id, admin.name)
             self.statusBar().showMessage(
@@ -1258,7 +1423,7 @@ class MainWindow(QMainWindow):
 
     def on_register_clicked(self):
         dialog = self._prepare_dialog(AdminRegistrationDialog(self))
-        if dialog.exec():
+        if exec_and_delete(dialog):
             admin = self.repo.get_admin_by_id(dialog.admin_id)
             self._activate_admin(
                 dialog.admin_id,
@@ -1367,6 +1532,8 @@ class MainWindow(QMainWindow):
         )
 
     def _show_asset_menu(self, position):
+        if self.current_mode == "TEST":
+            return
         item = self.tree_view.itemAt(position)
         if item is None:
             return
@@ -1378,9 +1545,11 @@ class MainWindow(QMainWindow):
         menu.addAction("Duplicate", self.duplicate_asset)
         menu.addAction("Move", self.move_asset)
         self.language_controller.install(menu)
-        menu.exec(self.tree_view.viewport().mapToGlobal(position))
+        exec_and_delete(menu, self.tree_view.viewport().mapToGlobal(position))
 
     def duplicate_asset(self):
+        if self.current_mode == "TEST":
+            return
         selected = self._selected_asset()
         if self.active_admin_id is None or selected is None:
             return
@@ -1518,6 +1687,8 @@ class MainWindow(QMainWindow):
         return " / ".join(reversed(parts))
 
     def move_asset(self):
+        if self.current_mode == "TEST":
+            return
         selected = self._selected_asset()
         if self.active_admin_id is None or selected is None:
             return
@@ -1632,7 +1803,7 @@ class MainWindow(QMainWindow):
 
     def _prompt_asset_name(self, title: str, label: str):
         dialog = self._create_asset_text_dialog(title, label)
-        accepted = dialog.exec() == QInputDialog.DialogCode.Accepted
+        accepted = exec_and_delete(dialog) == QInputDialog.DialogCode.Accepted
         return dialog.textValue(), accepted
 
     def _create_asset_choice_dialog(
@@ -1655,10 +1826,12 @@ class MainWindow(QMainWindow):
 
     def _prompt_asset_choice(self, title: str, label: str, choices: list[str]):
         dialog = self._create_asset_choice_dialog(title, label, choices)
-        accepted = dialog.exec() == QInputDialog.DialogCode.Accepted
+        accepted = exec_and_delete(dialog) == QInputDialog.DialogCode.Accepted
         return dialog.textValue(), accepted
 
     def add_asset(self):
+        if self.current_mode == "TEST":
+            return
         if self.active_admin_id is None:
             self.statusBar().showMessage("Sign in or register before adding assets.", 5000)
             return
@@ -1743,6 +1916,8 @@ class MainWindow(QMainWindow):
         self._load_scenario(scenario_id)
 
     def edit_asset(self):
+        if self.current_mode == "TEST":
+            return
         selected = self._selected_asset()
         if self.active_admin_id is None or selected is None:
             return
@@ -1758,6 +1933,8 @@ class MainWindow(QMainWindow):
             self._show_asset_error(error)
 
     def on_asset_renamed(self, item, _column):
+        if self.current_mode == "TEST":
+            return
         asset = item.data(0, Qt.ItemDataRole.UserRole)
         if not asset:
             return
@@ -1781,6 +1958,8 @@ class MainWindow(QMainWindow):
             self._refresh_assets(select_asset=asset)
 
     def delete_asset(self):
+        if self.current_mode == "TEST":
+            return
         selected = self._selected_asset()
         if self.active_admin_id is None or selected is None:
             return
@@ -1850,7 +2029,7 @@ class MainWindow(QMainWindow):
                 board_id=board_id,
                 parent=self,
             ))
-            if dialog.exec():
+            if exec_and_delete(dialog):
                 self._refresh_assets(
                     select_asset=("board", dialog.saved_board_id)
                 )
@@ -1858,6 +2037,8 @@ class MainWindow(QMainWindow):
             self._show_asset_error(error)
 
     def on_asset_selected(self, node_type: str, node_id: int):
+        if self.current_mode == "TEST":
+            return
         try:
             if node_type == "board":
                 board = self.repo.get_board_by_id(node_id)
@@ -1879,7 +2060,7 @@ class MainWindow(QMainWindow):
         self._update_asset_actions()
 
     def on_asset_double_clicked(self, node_type: str, node_id: int):
-        if node_type != "scenario":
+        if self.current_mode == "TEST" or node_type != "scenario":
             return
         try:
             self._save_active_scenario()
@@ -2065,8 +2246,8 @@ class MainWindow(QMainWindow):
             scenario,
             labels,
             force_robot=test_mode,
+            test_playback=test_mode,
         )
-        self.table_view.test_playback_active = test_mode
         self.table_view.current_side = scenario.declarer
         self.table_view.btn_side.setText(f"Human seat: {scenario.declarer}")
         self.table_view.view_mode = "HIDDEN"
@@ -2201,7 +2382,7 @@ class MainWindow(QMainWindow):
             dialog = self._prepare_dialog(
                 StudentIdentityDialog(self.repo, test["name"], self)
             )
-            if not dialog.exec():
+            if not exec_and_delete(dialog):
                 return
             student_id = dialog.authenticated_student["id"]
             try:
@@ -2294,7 +2475,18 @@ class MainWindow(QMainWindow):
         awarded_score = 0
         problem = self.lockdown_current_problem
         if problem is not None:
-            contract_scores = problem.get("scores", {}).get(contract, {})
+            scenario_scores = problem.get("scenario_scores", {})
+            if not isinstance(scenario_scores, dict):
+                scenario_scores = {}
+            scores_for_scenario = scenario_scores.get(scenario.id)
+            if not isinstance(scores_for_scenario, dict):
+                scores_for_scenario = scenario_scores.get(
+                    str(scenario.id),
+                    {},
+                )
+            contract_scores = scores_for_scenario.get(contract)
+            if not isinstance(contract_scores, dict):
+                contract_scores = problem.get("scores", {}).get(contract, {})
             if result_key in contract_scores:
                 awarded_score = int(contract_scores[result_key])
             self.lockdown_score += awarded_score
@@ -2328,7 +2520,7 @@ class MainWindow(QMainWindow):
                 language=self.language_controller.language,
                 parent=self,
             )
-            if dialog.exec() == QDialog.DialogCode.Accepted:
+            if exec_and_delete(dialog) == QDialog.DialogCode.Accepted:
                 self.lockdown_scenario_index += 1
                 self._start_next_test_scenario()
         else:
@@ -2374,7 +2566,7 @@ class MainWindow(QMainWindow):
             language=self.language_controller.language,
             parent=self,
         )
-        dialog.exec()
+        exec_and_delete(dialog)
         self.lockdown_terminal.write(
             f"Test complete. Score: {self.lockdown_score}."
         )
@@ -2469,7 +2661,7 @@ class MainWindow(QMainWindow):
                     self,
                 )
             )
-            dialog.exec()
+            exec_and_delete(dialog)
         except sqlite3.Error as error:
             self._show_asset_error(error)
             show_message(
@@ -2490,4 +2682,4 @@ class MainWindow(QMainWindow):
         dialog = self._prepare_dialog(
             InstructionsDialog(self.language, self)
         )
-        dialog.exec()
+        exec_and_delete(dialog)

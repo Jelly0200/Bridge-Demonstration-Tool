@@ -69,9 +69,56 @@ class TreeView(QTreeWidget):
         self.current_language = "en"
         self.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
         self.repo = Repository()
+        self._tree_zoom_font_size_px: Optional[int] = None
         self.currentItemChanged.connect(self.on_current_item_changed)
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.load_tree_data(admin_id=None)
+
+    def keyPressEvent(self, event):
+        zoom_modifiers = (
+            Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.MetaModifier
+        )
+        if event.modifiers() & zoom_modifiers:
+            if event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+                self.zoom_in()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_Minus:
+                self.zoom_out()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_0:
+                self.reset_zoom()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def zoom_in(self):
+        self._change_zoom(1)
+
+    def zoom_out(self):
+        self._change_zoom(-1)
+
+    def reset_zoom(self):
+        self._tree_zoom_font_size_px = None
+        self.setStyleSheet("")
+
+    def _change_zoom(self, change: int):
+        font = self.font()
+        current_size = self._tree_zoom_font_size_px
+        if current_size is None:
+            current_size = font.pixelSize()
+            if current_size <= 0:
+                point_size = font.pointSizeF()
+                current_size = round(point_size * 96 / 72) if point_size > 0 else 15
+        self._tree_zoom_font_size_px = max(
+            10,
+            min(28, current_size + change),
+        )
+        self.setStyleSheet(
+            f"QTreeWidget {{ font-size: {self._tree_zoom_font_size_px}px; }}"
+        )
 
     def load_tree_data(self, admin_id: Optional[int]):
         self.clear()

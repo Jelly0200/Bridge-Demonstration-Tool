@@ -24,7 +24,10 @@ class TestLanguageSwitch(unittest.TestCase):
             return_value=("中文", True),
         ):
             window.btn_language.click()
-
+        self.assertEqual(
+            window.action_robot_card_sound.text(),
+            "机器人出牌音效",
+        )
         self.assertEqual(window.language, "zh")
         self.assertEqual(window.btn_language.text(), "English")
         self.assertEqual(window.btn_test_mode.text(), "练习构建")
@@ -120,11 +123,21 @@ class TestLanguageSwitch(unittest.TestCase):
             [action.text() for action in window.tool_menu.actions()],
             [
                 "Monitor",
+                "Robot card sound",
                 "Instruction",
                 "Language",
                 "Keyboard shortcuts",
             ],
         )
+        self.assertTrue(window.action_robot_card_sound.isCheckable())
+        self.assertTrue(window.action_robot_card_sound.isChecked())
+        with patch.object(
+            window.table_view,
+            "set_robot_card_sound_enabled",
+        ) as set_sound_enabled:
+            window.action_robot_card_sound.trigger()
+        self.assertFalse(window.action_robot_card_sound.isChecked())
+        set_sound_enabled.assert_called_once_with(False)
         self.assertEqual(
             [action.text() for action in window.test_menu.actions()],
             [

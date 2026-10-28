@@ -62,9 +62,11 @@ class CardWidget(QFrame):
         text_color = self.SUIT_COLORS.get(self.suit, '#000000')
         rank_font_size = 7 if self.compact else 16 if self.large else 14
         suit_font_size = 12 if self.compact else 32 if self.large else 30
-        dds_font_size = 7 if self.compact else 10 if self.large else 10
+        sequence_font_size = 7 if self.compact else 10 if self.large else 10
+        dds_font_size = 6 if self.compact else 7
         rank_height = 8 if self.compact else 18 if self.large else 16
-        dds_height = 8 if self.compact else 12 if self.large else 11
+        dds_height = 7 if self.compact else 9
+        dds_width = 16 if self.compact else 22
 
         layout = QGridLayout(self)
         layout.setContentsMargins(2, 1, 2, 1)
@@ -86,7 +88,7 @@ class CardWidget(QFrame):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
         )
         self.sequence_label.setFont(
-            QFont("Arial", dds_font_size, QFont.Weight.Bold)
+            QFont("Arial", sequence_font_size, QFont.Weight.Bold)
         )
         sequence_height = max(
             dds_height,
@@ -107,8 +109,10 @@ class CardWidget(QFrame):
         self.dds_label.setProperty("bilingualExempt", True)
         self.dds_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dds_label.setFont(QFont("Arial", dds_font_size, QFont.Weight.Bold))
-        self.dds_label.setFixedHeight(dds_height)
-        self.dds_label.setStyleSheet("color: #075985; background: transparent;")
+        self.dds_label.setFixedSize(dds_width, dds_height)
+        self.dds_label.setStyleSheet(
+            "color: #075985; background-color: #e0f2fe; border-radius: 2px;"
+        )
         self.dds_label.hide()
         for label in (
             self.rank_label,
@@ -140,12 +144,39 @@ class CardWidget(QFrame):
             0,
             1,
             2,
-            alignment=Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
+            alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
         )
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
         layout.setRowStretch(1, 1)
 
+        self.update_style()
+
+    def set_card_code(self, card_code: str):
+        self.card_code = card_code
+        self.suit = card_code[0] if card_code else "S"
+        self.rank = card_code[1:] if len(card_code) > 1 else card_code
+        self.label_color = "NONE"
+        self.label_sequence = None
+        self.dds_tricks = None
+        self.is_hidden = False
+
+        symbol = self.SUIT_SYMBOLS.get(self.suit, "")
+        text_color = self.SUIT_COLORS.get(self.suit, "#000000")
+        self.rank_label.setText(self.rank)
+        self.rank_label.setStyleSheet(
+            f"color: {text_color}; background: transparent;"
+        )
+        self.rank_label.show()
+        self.sequence_label.clear()
+        self.sequence_label.hide()
+        self.card_label.setText(symbol)
+        self.card_label.setStyleSheet(
+            f"color: {text_color}; background: transparent;"
+        )
+        self.card_label.show()
+        self.dds_label.clear()
+        self.dds_label.hide()
         self.update_style()
 
     def set_hidden(self, hidden: bool):
@@ -262,40 +293,63 @@ class HandWidget(QWidget):
             return
         card_codes = [card.card_code for card in self.cards]
         self.horizontal = horizontal
-        self.set_hand(card_codes)
+        self.set_hand(card_codes, force_rebuild=True)
 
-    def set_hand(self, card_codes: list[str]):
-        self._clear_layout(self.main_layout)
+    def set_hand(self, card_codes: list[str], force_rebuild: bool = False):
+        if (
+            not force_rebuild
+            and card_codes == [card.card_code for card in self.cards]
+        ):
+            return
+
+        existing_cards = {card.card_code: card for card in self.cards}
+        self._clear_layout(self.main_layout, preserve_widgets=True)
         self.cards.clear()
+
         if self.horizontal:
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(2)
             for code in card_codes:
-                card_widget = self._make_card(code, compact=False)
-                row.addWidget(card_widget)
+                row.addWidget(self._reuse_or_make_card(code, existing_cards))
             row.addStretch(1)
             self.main_layout.addLayout(row)
-            return
+        else:
+            cards_by_suit = {suit: [] for suit in "SHDC"}
+            for code in card_codes:
+                cards_by_suit.setdefault(code[0], []).append(code)
+            suit_symbols = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
+            for suit in "SHDC":
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                row.setSpacing(1)
+                suit_label = QLabel(suit_symbols[suit])
+                suit_label.setFixedWidth(16)
+                suit_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                suit_color = "#fca5a5" if suit in {"H", "D"} else "#e2e8f0"
+                suit_label.setStyleSheet(
+                    f"color: {suit_color}; font-weight: bold;"
+                )
+                row.addWidget(suit_label)
+                for code in cards_by_suit[suit]:
+                    row.addWidget(self._reuse_or_make_card(code, existing_cards))
+                row.addStretch(1)
+                self.main_layout.addLayout(row)
 
-        cards_by_suit = {suit: [] for suit in "SHDC"}
-        for code in card_codes:
-            cards_by_suit.setdefault(code[0], []).append(code)
-        suit_symbols = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
-        for suit in "SHDC":
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(1)
-            suit_label = QLabel(suit_symbols[suit])
-            suit_label.setFixedWidth(16)
-            suit_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            suit_color = "#fca5a5" if suit in {"H", "D"} else "#e2e8f0"
-            suit_label.setStyleSheet(f"color: {suit_color}; font-weight: bold;")
-            row.addWidget(suit_label)
-            for code in cards_by_suit[suit]:
-                row.addWidget(self._make_card(code, compact=False))
-            row.addStretch(1)
-            self.main_layout.addLayout(row)
+        for card_widget in existing_cards.values():
+            card_widget.deleteLater()
+
+    def _reuse_or_make_card(
+        self,
+        code: str,
+        existing_cards: dict[str, CardWidget],
+    ) -> CardWidget:
+        card_widget = existing_cards.pop(code, None)
+        if card_widget is None:
+            return self._make_card(code, compact=False)
+        card_widget.show()
+        self.cards.append(card_widget)
+        return card_widget
 
     def _make_card(self, code: str, compact: bool) -> CardWidget:
         card_widget = CardWidget(code, self, compact=compact)
@@ -310,13 +364,16 @@ class HandWidget(QWidget):
         return card_widget
 
     @classmethod
-    def _clear_layout(cls, layout):
+    def _clear_layout(cls, layout, preserve_widgets: bool = False):
         while layout.count():
             item = layout.takeAt(0)
             if item.widget():
-                item.widget().deleteLater()
+                if preserve_widgets and isinstance(item.widget(), CardWidget):
+                    item.widget().hide()
+                else:
+                    item.widget().deleteLater()
             elif item.layout():
-                cls._clear_layout(item.layout())
+                cls._clear_layout(item.layout(), preserve_widgets)
                 item.layout().deleteLater()
 
     def set_hidden(self, hidden: bool):
