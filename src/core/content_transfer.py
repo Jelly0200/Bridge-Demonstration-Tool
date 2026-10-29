@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import sqlite3
 import struct
 import tempfile
 import zlib
@@ -95,7 +94,7 @@ def _fetch_rows(connection, query, parameters=()):
     ]
 
 
-def _collect_admin_payload(connection, admin_id: int) -> dict:
+def _collect_admin_payload(connection, admin_id: int, selection=None) -> dict:
     connection.execute("BEGIN")
     try:
         administrator = connection.execute(
@@ -207,56 +206,161 @@ def _collect_admin_payload(connection, admin_id: int) -> dict:
             """,
             (admin_id,),
         )
-        tables["Student_Test"] = _fetch_rows(
-            connection,
-            """
-            SELECT st.StudentId, st.TestId, st.AssignedAt, st.CompletedAt
-            FROM Student_Test st
-            JOIN Test t ON t.Id = st.TestId
-            WHERE t.AdministrationId = ? ORDER BY st.StudentId, st.TestId
-            """,
-            (admin_id,),
-        )
-        tables["Test_Result"] = _fetch_rows(
-            connection,
-            """
-            SELECT tr.Id, tr.TestId, tr.StudentId, tr.ApplicantName,
-                   tr.Contracts, tr.Score, tr.SubmittedAt
-            FROM Test_Result tr
-            JOIN Test t ON t.Id = tr.TestId
-            WHERE t.AdministrationId = ? ORDER BY tr.Id
-            """,
-            (admin_id,),
-        )
-        student_ids = {
-            row["StudentId"]
-            for row in tables["Student_Test"]
-        }
-        student_ids.update(
-            row["StudentId"]
-            for row in tables["Test_Result"]
-            if row["StudentId"] is not None
-        )
-        if student_ids:
-            placeholders = ",".join("?" for _ in student_ids)
-            tables["Student"] = _fetch_rows(
-                connection,
-                "SELECT Id, Name, Password FROM Student "
-                f"WHERE Id IN ({placeholders}) ORDER BY Id",
-                tuple(sorted(student_ids)),
-            )
-        else:
-            tables["Student"] = []
+        tables["Student"] = []
+        tables["Student_Test"] = []
+        tables["Test_Result"] = []
 
         connection.commit()
-        return {
+        payload = {
             "format_version": _FORMAT_VERSION,
             "source_administrator": administrator["Name"],
             "tables": tables,
         }
+        return _filter_export_payload(payload, selection)
     except Exception:
         connection.rollback()
         raise
+
+
+def _filter_export_payload(payload: dict, selection: dict | None) -> dict:
+    if selection is None:
+        return payload
+    if not isinstance(selection, dict) or set(selection) - {
+        "folders",
+        "cases",
+        "boards",
+        "tests",
+    }:
+        raise ValueError("The export selection is invalid.")
+
+    tables = payload["tables"]
+    table_names = {
+        "folders": "Folder",
+        "cases": "CaseStudy",
+        "boards": "Board",
+        "tests": "Test",
+    }
+    selected = {}
+    for selection_name, table_name in table_names.items():
+        ids = selection.get(selection_name, [])
+        if not isinstance(ids, (list, tuple, set)):
+            raise ValueError("The export selection is invalid.")
+        if any(type(row_id) is not int for row_id in ids):
+            raise ValueError("The export selection contains an invalid identifier.")
+        available_ids = {row["Id"] for row in tables[table_name]}
+        selected_ids = set(ids)
+        if not selected_ids <= available_ids:
+            raise ValueError("The export selection contains an unknown asset.")
+        selected[selection_name] = selected_ids
+    if not any(selected.values()):
+        raise ValueError("Select at least one folder, case, board, or test.")
+
+    folders_by_id = {row["Id"]: row for row in tables["Folder"]}
+    cases_by_id = {row["Id"]: row for row in tables["CaseStudy"]}
+    boards_by_id = {row["Id"]: row for row in tables["Board"]}
+    scenarios_by_id = {row["Id"]: row for row in tables["Scenario"]}
+    folder_ids = set(selected["folders"])
+
+    changed = True
+    while changed:
+        previous_count = len(folder_ids)
+        folder_ids.update(
+            row["Id"]
+            for row in tables["Folder"]
+            if row["ParentFolderId"] in folder_ids
+        )
+        changed = len(folder_ids) != previous_count
+    case_ids = {
+        row["Id"]
+        for row in tables["CaseStudy"]
+        if row["FolderId"] in folder_ids
+    }
+    case_ids.update(selected["cases"])
+
+    board_ids = {
+        row["Id"]
+        for row in tables["Board"]
+        if row["CaseId"] in case_ids
+    }
+    board_ids.update(selected["boards"])
+    case_ids.update(
+        boards_by_id[board_id]["CaseId"]
+        for board_id in board_ids
+    )
+
+    scenario_ids = {
+        row["Id"]
+        for row in tables["Scenario"]
+        if row["BoardId"] in board_ids
+    }
+    selected_test_scenarios = [
+        row
+        for row in tables["Test_Scenario"]
+        if row["TestId"] in selected["tests"]
+    ]
+    scenario_ids.update(row["ScenarioId"] for row in selected_test_scenarios)
+    for scenario_id in scenario_ids:
+        scenario = scenarios_by_id.get(scenario_id)
+        if scenario is None:
+            raise ValueError("A selected test references an unavailable scenario.")
+        board_id = scenario["BoardId"]
+        board_ids.add(board_id)
+        case_ids.add(boards_by_id[board_id]["CaseId"])
+
+    for case_id in case_ids:
+        case = cases_by_id.get(case_id)
+        if case is None:
+            raise ValueError("A selected board references an unavailable case.")
+        folder_id = case["FolderId"]
+        while folder_id is not None:
+            folder_ids.add(folder_id)
+            folder_id = folders_by_id[folder_id]["ParentFolderId"]
+    for folder_id in tuple(folder_ids):
+        parent_id = folders_by_id[folder_id]["ParentFolderId"]
+        while parent_id is not None:
+            folder_ids.add(parent_id)
+            parent_id = folders_by_id[parent_id]["ParentFolderId"]
+
+    rule_ids = {
+        row["RuleId"]
+        for row in selected_test_scenarios
+    }
+    kept_ids = {
+        "Folder": folder_ids,
+        "CaseStudy": case_ids,
+        "Board": board_ids,
+        "BoardConfiguration": {
+            row["BoardConfigurationId"]
+            for row in tables["Board"]
+            if row["Id"] in board_ids
+        },
+        "Scenario": scenario_ids,
+        "Label": {
+            row["Id"]
+            for row in tables["Label"]
+            if row["ScenarioId"] in scenario_ids
+        },
+        "Test": selected["tests"],
+        "Rule": rule_ids,
+        "Test_Scenario": {
+            row["Id"]
+            for row in selected_test_scenarios
+        },
+        "Student": set(),
+        "Student_Test": set(),
+        "Test_Result": set(),
+    }
+    for table_name, rows in tables.items():
+        rows[:] = (
+            [
+                row
+                for row in rows
+                if "Id" in row and row["Id"] in kept_ids[table_name]
+            ]
+            if table_name != "Student_Test"
+            else []
+        )
+    return payload
 
 
 def _validate_payload(payload: dict) -> dict:
@@ -271,6 +375,18 @@ def _validate_payload(payload: dict) -> dict:
     tables = payload["tables"]
     if set(tables) != set(_TABLE_COLUMNS):
         raise ValueError("The transfer package does not contain the expected data.")
+    destination = payload.get("destination_administrator")
+    if destination is not None:
+        if (
+            not isinstance(destination, dict)
+            or set(destination) != {"Name", "Password"}
+            or not isinstance(destination["Name"], str)
+            or destination["Name"] != destination["Name"].strip()
+            or not 3 <= len(destination["Name"]) <= 64
+            or not isinstance(destination["Password"], str)
+            or not is_password_hash(destination["Password"])
+        ):
+            raise ValueError("The transfer package has invalid destination account data.")
     for table_name, columns in _TABLE_COLUMNS.items():
         rows = tables[table_name]
         if not isinstance(rows, list):
@@ -444,17 +560,120 @@ class ContentTransferService:
     def __init__(self, database_manager):
         self.database_manager = database_manager
 
+    def list_export_assets(self, admin_id: int) -> list[dict]:
+        connection = self.database_manager.get_connection()
+        try:
+            folders = _fetch_rows(
+                connection,
+                """
+                SELECT Id, ParentFolderId, Name FROM Folder
+                WHERE AdministrationId = ? ORDER BY Name, Id
+                """,
+                (admin_id,),
+            )
+            cases = _fetch_rows(
+                connection,
+                """
+                SELECT c.Id, c.FolderId, c.Name, f.Name AS FolderName
+                FROM CaseStudy c
+                JOIN Folder f ON f.Id = c.FolderId
+                WHERE f.AdministrationId = ? ORDER BY f.Name, c.Name, c.Id
+                """,
+                (admin_id,),
+            )
+            boards = _fetch_rows(
+                connection,
+                """
+                SELECT b.Id, b.CaseId, COALESCE(b.Description, '') AS Name,
+                       c.Name AS CaseName, f.Name AS FolderName
+                FROM Board b
+                JOIN CaseStudy c ON c.Id = b.CaseId
+                JOIN Folder f ON f.Id = c.FolderId
+                WHERE f.AdministrationId = ?
+                ORDER BY f.Name, c.Name, b.Id
+                """,
+                (admin_id,),
+            )
+            tests = _fetch_rows(
+                connection,
+                """
+                SELECT Id, Name FROM Test
+                WHERE AdministrationId = ? ORDER BY Name, Id
+                """,
+                (admin_id,),
+            )
+        finally:
+            connection.close()
+
+        assets = [
+            {
+                "type": "folder",
+                "id": row["Id"],
+                "parent_id": row["ParentFolderId"],
+                "name": row["Name"],
+            }
+            for row in folders
+        ]
+        assets.extend(
+            {
+                "type": "case",
+                "id": row["Id"],
+                "folder_id": row["FolderId"],
+                "name": f'{row["FolderName"]} / {row["Name"]}',
+            }
+            for row in cases
+        )
+        for row in boards:
+            board_name = row["Name"] or f'Board #{row["Id"]}'
+            assets.append(
+                {
+                    "type": "board",
+                    "id": row["Id"],
+                    "case_id": row["CaseId"],
+                    "name": (
+                        f'{row["FolderName"]} / {row["CaseName"]} / '
+                        f"{board_name}"
+                    ),
+                }
+            )
+        assets.extend(
+            {"type": "test", "id": row["Id"], "name": row["Name"]}
+            for row in tests
+        )
+        return assets
+
     def export_admin_data(
         self,
         admin_id: int,
         package_path: str | os.PathLike,
         passphrase: str,
+        selection: dict | None = None,
+        destination_account: dict | None = None,
     ) -> dict:
         connection = self.database_manager.get_connection()
         try:
-            payload = _collect_admin_payload(connection, admin_id)
+            payload = _collect_admin_payload(connection, admin_id, selection)
         finally:
             connection.close()
+        if destination_account is not None:
+            if not isinstance(destination_account, dict):
+                raise ValueError("The destination administrator account is invalid.")
+            name = destination_account.get("name")
+            password = destination_account.get("password")
+            if (
+                not isinstance(name, str)
+                or not 3 <= len(name.strip()) <= 64
+                or not isinstance(password, str)
+                or len(password) < 8
+            ):
+                raise ValueError(
+                    "Enter a destination administrator name and a password "
+                    "with at least 8 characters."
+                )
+            payload["destination_administrator"] = {
+                "Name": name.strip(),
+                "Password": hash_password(password),
+            }
         package = _encrypt_payload(_validate_payload(payload), passphrase)
         target = Path(package_path)
         temporary_path = None
@@ -484,7 +703,7 @@ class ContentTransferService:
     ) -> dict:
         return _decrypt_package(package_path, passphrase)
 
-    def import_admin_data(self, admin_id: int, payload: dict) -> dict:
+    def import_admin_data(self, admin_id: int | None, payload: dict) -> dict:
         payload = _validate_payload(payload)
         tables = payload["tables"]
         connection = self.database_manager.get_connection()
@@ -502,7 +721,18 @@ class ContentTransferService:
         }
         try:
             connection.execute("BEGIN IMMEDIATE")
-            if connection.execute(
+            if admin_id is None:
+                destination = payload.get("destination_administrator")
+                if destination is None:
+                    raise ValueError(
+                        "This package does not include a destination administrator."
+                    )
+                cursor = connection.execute(
+                    "INSERT INTO Administration (Name, Password) VALUES (?, ?)",
+                    (destination["Name"], destination["Password"]),
+                )
+                admin_id = cursor.lastrowid
+            elif connection.execute(
                 "SELECT 1 FROM Administration WHERE Id = ?",
                 (admin_id,),
             ).fetchone() is None:
@@ -712,15 +942,21 @@ class ContentTransferService:
             raise
         finally:
             connection.close()
-        return _payload_summary(payload)
+        summary = _payload_summary(payload)
+        summary["destination_administrator_id"] = admin_id
+        return summary
 
 
 def _payload_summary(payload: dict) -> dict:
     tables = payload["tables"]
-    return {
+    summary = {
         "source_administrator": payload["source_administrator"],
         "counts": {
             table_name: len(rows)
             for table_name, rows in tables.items()
         },
     }
+    destination = payload.get("destination_administrator")
+    if destination is not None:
+        summary["destination_administrator"] = destination["Name"]
+    return summary

@@ -3,6 +3,7 @@ import random
 import re
 import sqlite3
 from collections import deque
+from datetime import date
 from pathlib import Path
 import sys
 
@@ -43,8 +44,11 @@ from PyQt6.QtWidgets import (
 
 from src.database.repository import Repository
 from src.core.content_transfer import ContentTransferService
+from src.security.passwords import hash_password
 from src.ui.dialogs.admin_registration_dialog import AdminRegistrationDialog
+from src.ui.dialogs.admin_expiration_dialog import AdminExpirationDialog
 from src.ui.dialogs.board_editor import BoardEditorDialog
+from src.ui.dialogs.export_selection_dialog import ExportSelectionDialog
 from src.ui.dialogs.login_dialog import LoginDialog
 from src.ui.dialogs.instructions_dialog import InstructionsDialog
 from src.ui.dialogs.monitor_dialog import MonitorDialog
@@ -604,6 +608,12 @@ class MainWindow(QMainWindow):
         self.language_controller.install(self)
         self._apply_app_theme()
         self._update_admin_indicator()
+        self.admin_expiration_timer = QTimer(self)
+        self.admin_expiration_timer.setInterval(60_000)
+        self.admin_expiration_timer.timeout.connect(
+            self._check_admin_expiration
+        )
+        self.admin_expiration_timer.start()
 
     def _apply_app_theme(self):
         self.setStyleSheet("""
@@ -952,6 +962,10 @@ class MainWindow(QMainWindow):
         self.action_admin_logout = self.administration_menu.addAction(
             "Administration Logout", self.on_logout_clicked
         )
+        self.action_admin_expiration = self.administration_menu.addAction(
+            "Set my account expiration",
+            self.set_my_admin_expiration,
+        )
         self.action_student_login = self.administration_menu.addAction(
             "Student login", self.student_login
         )
@@ -1094,6 +1108,25 @@ class MainWindow(QMainWindow):
     def export_admin_data(self):
         if self.active_admin_id is None:
             return
+        service = ContentTransferService(self.repo.db)
+        try:
+            assets = service.list_export_assets(self.active_admin_id)
+        except (LookupError, sqlite3.Error) as error:
+            show_message(
+                self,
+                "critical",
+                "Unable to export administrator data",
+                str(error),
+            )
+            return
+        dialog = self._prepare_dialog(
+            ExportSelectionDialog(assets, self.language, self)
+        )
+        if not exec_and_delete(dialog):
+            return
+        selection = dialog.selected_assets()
+        destination_account = dialog.destination_account()
+
         filename, _selected_filter = QFileDialog.getSaveFileName(
             self,
             translate_text("Save transfer package", self.language),
@@ -1134,10 +1167,12 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            ContentTransferService(self.repo.db).export_admin_data(
+            service.export_admin_data(
                 self.active_admin_id,
                 filename,
                 passphrase,
+                selection=selection,
+                destination_account=destination_account,
             )
         except (LookupError, OSError, sqlite3.Error, ValueError) as error:
             show_message(
@@ -1155,8 +1190,6 @@ class MainWindow(QMainWindow):
         )
 
     def import_admin_data(self):
-        if self.active_admin_id is None:
-            return
         filename, _selected_filter = QFileDialog.getOpenFileName(
             self,
             translate_text("Open transfer package", self.language),
@@ -1193,6 +1226,62 @@ class MainWindow(QMainWindow):
             len(rows)
             for rows in payload["tables"].values()
         )
+        destination = payload.get("destination_administrator")
+        if destination is None:
+            destination_name, accepted = QInputDialog.getText(
+                self,
+                translate_text("New administrator account", self.language),
+                translate_text("Enter a name for the new account:", self.language),
+            )
+            if not accepted:
+                return
+            account_password, accepted = QInputDialog.getText(
+                self,
+                translate_text("New account password", self.language),
+                translate_text("Enter a password (at least 8 characters):", self.language),
+                QLineEdit.EchoMode.Password,
+            )
+            if not accepted:
+                return
+            confirmation, accepted = QInputDialog.getText(
+                self,
+                translate_text("Confirm new account password", self.language),
+                translate_text("Re-enter the new account password:", self.language),
+                QLineEdit.EchoMode.Password,
+            )
+            if not accepted:
+                return
+            destination_name = destination_name.strip()
+            if len(destination_name) < 3 or len(destination_name) > 64:
+                show_message(
+                    self,
+                    "warning",
+                    "Invalid account name",
+                    "The new administrator account name must have at least 3 characters.",
+                )
+                return
+            if len(account_password) < 8:
+                show_message(
+                    self,
+                    "warning",
+                    "Password too short",
+                    "The new administrator account password must have at least 8 characters.",
+                )
+                return
+            if account_password != confirmation:
+                show_message(
+                    self,
+                    "warning",
+                    "Passwords do not match",
+                    "The new administrator account passwords do not match.",
+                )
+                return
+            destination = {
+                "Name": destination_name,
+                "Password": hash_password(account_password),
+            }
+            payload["destination_administrator"] = destination
+        destination_name = destination["Name"]
         show_message(
             self,
             "information",
@@ -1204,15 +1293,18 @@ class MainWindow(QMainWindow):
             self,
             "question",
             "Import administrator data",
-            "Import this package into the signed-in administrator account? "
-            "Existing data will not be overwritten.",
+            translate_text(
+                "Create the new administrator account {account} and import "
+                "the selected content into it?",
+                self.language,
+            ).format(account=destination_name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            service.import_admin_data(self.active_admin_id, payload)
+            imported = service.import_admin_data(None, payload)
         except (LookupError, OSError, sqlite3.Error, ValueError) as error:
             show_message(
                 self,
@@ -1221,13 +1313,20 @@ class MainWindow(QMainWindow):
                 str(error),
             )
             return
-        self._refresh_assets()
-        show_message(
-            self,
-            "information",
-            "Administrator data imported",
-            f"The data was added to {self.active_admin_name}.",
-        )
+        if destination is not None:
+            self._activate_admin(
+                imported["destination_administrator_id"],
+                destination_name,
+            )
+            message = (
+                f"The new account {destination_name} was created and the "
+                "selected content was imported. Sign in with the account "
+                "password chosen during export."
+            )
+        else:
+            self._refresh_assets()
+            message = f"The data was added to {self.active_admin_name}."
+        show_message(self, "information", "Administrator data imported", message)
 
     def register_student(self):
         if self.active_admin_id is None:
@@ -1443,6 +1542,9 @@ class MainWindow(QMainWindow):
         except (LookupError, sqlite3.Error, ValueError) as error:
             self._show_asset_error(error)
             return
+        self._clear_admin_session("Administrator signed out")
+
+    def _clear_admin_session(self, status_message):
         self.active_admin_id = None
         self.active_admin_name = None
         self.active_case_id = None
@@ -1454,7 +1556,78 @@ class MainWindow(QMainWindow):
         self._update_admin_indicator()
         self._update_asset_actions()
         self.set_mode("NORMAL")
-        self.statusBar().showMessage("Administrator signed out", 4000)
+        self.statusBar().showMessage(status_message, 4000)
+
+    def set_my_admin_expiration(self):
+        admin_id = self.active_admin_id
+        if admin_id is None:
+            return
+        try:
+            admin = self.repo.get_admin_by_id(admin_id)
+            if admin is None:
+                raise LookupError("The signed-in administrator was not found.")
+            dialog = self._prepare_dialog(
+                AdminExpirationDialog(admin.expires_at, self)
+            )
+            if not exec_and_delete(dialog):
+                return
+            if self.active_admin_id != admin_id:
+                return
+            expires_on = dialog.selected_expiration_date()
+            self.repo.set_admin_expiration(admin_id, expires_on)
+        except (LookupError, sqlite3.Error, ValueError, TypeError) as error:
+            self._show_asset_error(error)
+            show_message(
+                self,
+                "critical",
+                "Unable to update account expiration",
+                str(error),
+            )
+            return
+
+        if expires_on is None:
+            self.statusBar().showMessage("Your account will not expire", 5000)
+        else:
+            self.statusBar().showMessage(
+                f"Your account expires after {expires_on.isoformat()}",
+                5000,
+            )
+
+    def _check_admin_expiration(self):
+        admin_id = self.active_admin_id
+        if admin_id is None:
+            return
+        try:
+            admin = self.repo.get_admin_by_id(admin_id)
+        except sqlite3.Error as error:
+            self._show_asset_error(error)
+            return
+        if admin is None or admin.expires_at is None:
+            return
+        try:
+            expires_on = date.fromisoformat(admin.expires_at)
+        except ValueError as error:
+            self._show_asset_error(error)
+            self._clear_admin_session(
+                "Invalid account expiration; administrator signed out"
+            )
+            return
+        if date.today() <= expires_on:
+            return
+
+        try:
+            self._save_active_scenario()
+        except (LookupError, sqlite3.Error, ValueError) as error:
+            self._show_asset_error(error)
+        self._clear_admin_session(
+            "Administrator account expired and was signed out"
+        )
+        show_message(
+            self,
+            "information",
+            "Administrator account expired",
+            "Your administrator account has expired and you have been signed out.",
+        )
 
     def _activate_admin(self, admin_id: int, name=None, default_case_id=None):
         self.active_admin_id = admin_id
@@ -1478,6 +1651,9 @@ class MainWindow(QMainWindow):
         self.admin_indicator.show()
         self.btn_monitor.setEnabled(self.active_admin_id is not None)
         self.action_admin_logout.setEnabled(self.active_admin_id is not None)
+        self.action_admin_expiration.setEnabled(
+            self.active_admin_id is not None and self.current_mode != "TEST"
+        )
         self.action_student_management.setEnabled(
             self.active_admin_id is not None
         )
@@ -1487,7 +1663,7 @@ class MainWindow(QMainWindow):
             self.active_admin_id is not None
         )
         self.action_import_admin_data.setEnabled(
-            self.active_admin_id is not None and self.current_mode != "TEST"
+            self.current_mode != "TEST"
         )
         self.action_monitor.setEnabled(self.active_admin_id is not None)
         self.action_run_test.setEnabled(self.active_admin_id is not None)
@@ -1524,11 +1700,14 @@ class MainWindow(QMainWindow):
             enabled and signed_in and selected is not None
         )
         self.action_test_construction.setEnabled(signed_in)
+        self.action_admin_expiration.setEnabled(
+            signed_in and self.current_mode != "TEST"
+        )
         self.action_export_admin_data.setEnabled(
             signed_in and self.current_mode != "TEST"
         )
         self.action_import_admin_data.setEnabled(
-            signed_in and self.current_mode != "TEST"
+            self.current_mode != "TEST"
         )
 
     def _show_asset_menu(self, position):

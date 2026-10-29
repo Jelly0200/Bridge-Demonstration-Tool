@@ -6,7 +6,6 @@ import unittest
 from src.core.content_transfer import ContentTransferService
 from src.database.db_manager import DatabaseManager
 from src.database.repository import Repository
-from src.security.passwords import hash_password
 
 
 class TestContentTransfer(unittest.TestCase):
@@ -40,7 +39,13 @@ class TestContentTransfer(unittest.TestCase):
             root_id,
             "Imported lesson",
         )
+        self.unselected_folder_id = self.repository.create_folder(
+            self.source_admin_id,
+            None,
+            "Private draft",
+        )
         case_id = self.repository.create_case(self.child_folder_id, "Opening")
+        self.case_id = case_id
         board_id = self.repository.save_board(
             case_id,
             {
@@ -115,8 +120,13 @@ class TestContentTransfer(unittest.TestCase):
             self.source_admin_id,
             self.package_path,
             self.passphrase,
+            destination_account={
+                "name": "content_owner",
+                "password": "content owner password",
+            },
         )
         self.assertEqual(summary["source_administrator"], "source_admin")
+        self.assertEqual(summary["destination_administrator"], "content_owner")
         with open(self.package_path, "rb") as package_file:
             encrypted_package = package_file.read()
         self.assertTrue(encrypted_package.startswith(b"BDTPACK\0"))
@@ -127,26 +137,32 @@ class TestContentTransfer(unittest.TestCase):
         DatabaseManager._instance = None
         DatabaseManager(destination_path)
         destination_repository = Repository()
-        destination_admin_id = destination_repository.create_admin(
-            "destination_admin",
-            "destination password",
-        )
         destination_service = ContentTransferService(destination_repository.db)
         payload = destination_service.read_package(
             self.package_path,
             self.passphrase,
         )
         self.assertNotIn("Administration", payload["tables"])
-        self.assertEqual(len(payload["tables"]["Folder"]), 2)
-        self.assertEqual(len(payload["tables"]["Test_Result"]), 1)
+        self.assertEqual(len(payload["tables"]["Folder"]), 3)
+        self.assertEqual(payload["tables"]["Student"], [])
+        self.assertEqual(payload["tables"]["Student_Test"], [])
+        self.assertEqual(payload["tables"]["Test_Result"], [])
         self.assertNotIn(
             "Private other-admin folder",
             [row["Name"] for row in payload["tables"]["Folder"]],
         )
 
-        imported = destination_service.import_admin_data(
-            destination_admin_id,
-            payload,
+        imported = destination_service.import_admin_data(None, payload)
+        destination_admin_id = imported["destination_administrator_id"]
+        self.assertEqual(
+            destination_repository.get_admin_by_id(destination_admin_id).name,
+            "content_owner",
+        )
+        self.assertIsNotNone(
+            destination_repository.authenticate_admin(
+                "content_owner",
+                "content owner password",
+            )
         )
         self.assertEqual(imported["source_administrator"], "source_admin")
         self.assertEqual(
@@ -156,7 +172,7 @@ class TestContentTransfer(unittest.TestCase):
                     destination_admin_id
                 )
             ],
-            ["Teaching materials", "Imported lesson"],
+            ["Teaching materials", "Imported lesson", "Private draft"],
         )
         imported_folders = destination_repository.get_folders_by_admin(
             destination_admin_id
@@ -173,10 +189,75 @@ class TestContentTransfer(unittest.TestCase):
         )
         self.assertEqual(
             len(destination_repository.get_test_results_by_admin(destination_admin_id)),
-            1,
+            0,
         )
         self.assertIsNone(
             destination_repository.get_admin_by_name("source_admin")
+        )
+
+    def test_asset_selection_includes_dependencies_and_omits_students(self):
+        summary = self.service.export_admin_data(
+            self.source_admin_id,
+            self.package_path,
+            self.passphrase,
+            selection={"cases": [self.case_id]},
+        )
+        self.assertEqual(summary["counts"]["Folder"], 2)
+        self.assertEqual(summary["counts"]["CaseStudy"], 1)
+        self.assertEqual(summary["counts"]["Test"], 0)
+        payload = self.service.read_package(self.package_path, self.passphrase)
+        self.assertEqual(payload["tables"]["Student"], [])
+        self.assertEqual(payload["tables"]["Student_Test"], [])
+        self.assertEqual(payload["tables"]["Test_Result"], [])
+        self.assertEqual(
+            [row["Name"] for row in payload["tables"]["Folder"]],
+            ["Teaching materials", "Imported lesson"],
+        )
+        test_summary = self.service.export_admin_data(
+            self.source_admin_id,
+            self.package_path,
+            self.passphrase,
+            selection={"tests": [self.test_id]},
+        )
+        self.assertEqual(test_summary["counts"]["Test"], 1)
+        self.assertEqual(test_summary["counts"]["Board"], 1)
+        self.assertEqual(test_summary["counts"]["Scenario"], 1)
+        self.assertEqual(test_summary["counts"]["Folder"], 2)
+
+    def test_import_keeps_selected_assets_separate_from_source_account(self):
+        self.service.export_admin_data(
+            self.source_admin_id,
+            self.package_path,
+            self.passphrase,
+            selection={"cases": [self.case_id]},
+            destination_account={
+                "name": "selected_content",
+                "password": "selected content password",
+            },
+        )
+        payload = self.service.read_package(self.package_path, self.passphrase)
+        imported = self.service.import_admin_data(None, payload)
+        target_admin_id = imported["destination_administrator_id"]
+
+        self.assertEqual(
+            [
+                folder.name
+                for folder in self.repository.get_folders_by_admin(target_admin_id)
+            ],
+            ["Teaching materials", "Imported lesson"],
+        )
+        self.assertEqual(
+            [test["name"] for test in self.repository.get_tests_by_admin(target_admin_id)],
+            [],
+        )
+        self.assertEqual(
+            [
+                folder.name
+                for folder in self.repository.get_folders_by_admin(
+                    self.source_admin_id
+                )
+            ],
+            ["Teaching materials", "Imported lesson", "Private draft"],
         )
 
     def test_wrong_passphrase_and_modified_package_are_rejected(self):
@@ -215,10 +296,8 @@ class TestContentTransfer(unittest.TestCase):
         payload = copy.deepcopy(
             self.service.read_package(self.package_path, self.passphrase)
         )
-        payload["tables"]["Student"][0]["Password"] = hash_password(
-            "different student password"
-        )
-        with self.assertRaisesRegex(ValueError, "different credentials"):
+        payload["tables"]["Test_Scenario"][0]["ScenarioId"] = 999999
+        with self.assertRaisesRegex(ValueError, "missing test scenario reference"):
             self.service.import_admin_data(self.target_admin_id, payload)
         self.assertEqual(
             [

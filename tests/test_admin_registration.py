@@ -2,13 +2,15 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import date, timedelta
 from unittest.mock import Mock, patch
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QLineEdit,
     QMessageBox,
     QTreeWidgetItem,
@@ -69,6 +71,124 @@ class TestAdminRegistration(unittest.TestCase):
         folders = self.repo.get_folders_by_admin(admin.id)
         self.assertEqual(len(folders), 1)
         self.assertEqual(len(self.repo.get_cases_by_folder(folders[0].id)), 1)
+
+    def test_expiration_blocks_only_expired_administrator_login(self):
+        admin_id = self.repo.create_admin("expires", "correct horse")
+        other_admin_id = self.repo.create_admin("unaffected", "another password")
+        expires_on = date.today() + timedelta(days=1)
+
+        self.repo.set_admin_expiration(admin_id, expires_on)
+
+        self.assertEqual(
+            self.repo.get_admin_by_id(admin_id).expires_at,
+            expires_on.isoformat(),
+        )
+        self.assertEqual(
+            self.repo.authenticate_admin("expires", "correct horse").id,
+            admin_id,
+        )
+        self.assertEqual(
+            self.repo.authenticate_admin("unaffected", "another password").id,
+            other_admin_id,
+        )
+        with self.assertRaises(ValueError):
+            self.repo.set_admin_expiration(admin_id, date.today() - timedelta(days=1))
+
+        conn = self.repo.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE Administration SET ExpiresAt = ? WHERE Id = ?",
+                ((date.today() - timedelta(days=1)).isoformat(), admin_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertIsNone(self.repo.authenticate_admin("expires", "correct horse"))
+        self.assertEqual(
+            self.repo.authenticate_admin("unaffected", "another password").id,
+            other_admin_id,
+        )
+
+        self.repo.set_admin_expiration(admin_id, None)
+        self.assertEqual(
+            self.repo.authenticate_admin("expires", "correct horse").id,
+            admin_id,
+        )
+
+    def test_existing_administration_table_is_migrated_for_expiration(self):
+        legacy_path = os.path.join(self.temp_dir.name, "legacy.db")
+        conn = sqlite3.connect(legacy_path)
+        try:
+            conn.execute(
+                """CREATE TABLE Administration (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Name TEXT NOT NULL UNIQUE,
+                    Password TEXT NOT NULL
+                )"""
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        DatabaseManager._instance = None
+        migrated_db = DatabaseManager(legacy_path)
+        conn = migrated_db.get_connection()
+        try:
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(Administration)")
+            }
+        finally:
+            conn.close()
+
+        self.assertIn("ExpiresAt", columns)
+
+    def test_admin_expiration_action_changes_only_signed_in_account(self):
+        own_admin_id = self.repo.create_admin("own_account", "correct horse")
+        other_admin_id = self.repo.create_admin("other_account", "another password")
+        window = MainWindow()
+        self.addCleanup(window.close)
+        window._activate_admin(own_admin_id, "own_account")
+
+        def accept_expiration(dialog):
+            dialog.never_expires_checkbox.setChecked(False)
+            dialog.expiration_date.setDate(
+                QDate.currentDate().addDays(5)
+            )
+            return QDialog.DialogCode.Accepted
+
+        with patch(
+            "src.ui.main_window.exec_and_delete",
+            side_effect=accept_expiration,
+        ):
+            window.set_my_admin_expiration()
+
+        self.assertEqual(
+            self.repo.get_admin_by_id(own_admin_id).expires_at,
+            (date.today() + timedelta(days=5)).isoformat(),
+        )
+        self.assertIsNone(self.repo.get_admin_by_id(other_admin_id).expires_at)
+
+    def test_expired_active_admin_session_is_signed_out(self):
+        admin_id = self.repo.create_admin("expired_session", "correct horse")
+        conn = self.repo.db.get_connection()
+        try:
+            conn.execute(
+                "UPDATE Administration SET ExpiresAt = ? WHERE Id = ?",
+                ((date.today() - timedelta(days=1)).isoformat(), admin_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        window = MainWindow()
+        self.addCleanup(window.close)
+        window._activate_admin(admin_id, "expired_session")
+
+        with patch("src.ui.main_window.show_message"):
+            window._check_admin_expiration()
+
+        self.assertIsNone(window.active_admin_id)
+        self.assertFalse(window.action_admin_expiration.isEnabled())
 
     def test_monitor_includes_current_admin_and_shows_each_admin_counts(self):
         current_admin_id, _ = self.repo.register_admin("current_admin", "current password")

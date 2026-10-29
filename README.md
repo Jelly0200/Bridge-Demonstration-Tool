@@ -5,6 +5,7 @@ A desktop application for administrators to organize bridge deals and scenarios,
 ## Current capabilities
 
 - Register, log in, and log out as an administrator. Administrator passwords are stored as hashes.
+- Set an optional expiration date for your own signed-in administrator account. Expired accounts are denied sign-in and active sessions are signed out.
 - Organize assets in an administrator-specific tree of folders, cases, boards, and scenarios. The tree uses distinct icons and colors for each asset type, and supports search, context-menu actions, and keyboard shortcuts. Use **Expand all**/**Collapse all** and Ctrl/Cmd + +/−/0 to manage the current tree's folders and text size.
 - Move folders, cases, boards, and scenarios between valid parents. The move workflow previews the source and destination and requires confirmation before changing the asset tree; descendants move with their parent.
 - Add assets with wide, readable name fields and selection dialogs.
@@ -16,7 +17,7 @@ A desktop application for administrators to organize bridge deals and scenarios,
 - Use Last move or Reset to review analysis play. Reset restores the oldest state still retained in the undo history.
 - Open Instructions for an in-app guide. The administrator-only Monitor shows aggregate resource counts for all administrators, including the current account, and local runtime/error status, without exposing saved asset contents.
 - Use the four top-level cascade menus for administration, tools, tests, and project documents. Administrators register students and assign tests from Test → Student management; students use Administrator → Student login. Test → Examine test results displays saved results for the signed-in administrator. Explorer opens `README.md` and `requirements.txt`; in Chinese, the README entry opens `README_zh.md` without adding a duplicate menu item.
-- Export an administrator's workspace as a single encrypted `.bdtpack` file and import it on another computer. The package uses scrypt key derivation and AES-256-GCM authenticated encryption; imports are transactional and add data to the signed-in administrator without exporting administrator login credentials.
+- Export selected administrator workspace content as a single encrypted `.bdtpack` file and import it on another computer. Each import creates a separate destination administrator account; importing does not require an active administrator. The package uses scrypt key derivation and AES-256-GCM authenticated encryption.
 - Build tests from multiple problems. Each problem can include several candidate scenarios from one case; one candidate is selected for each problem every time the test runs. Each scenario has its own contract/stasis scoring rule, even when contracts are shared.
 - Run tests in Lockdown mode with hidden hands. Administrators assign tests to registered students. Student login automatically enters Lockdown and lists available tests; each assignment can be completed only once. Results are linked to the student account.
 - Generate an administrator-wide test report with score statistics, a contestant-by-problem matrix, scenario difficulty statistics, and the top three contestants; export it as a PDF in English or Chinese.
@@ -95,7 +96,7 @@ The suite covers database/repository behavior, administrator registration, board
 
 | Table | Purpose |
 | --- | --- |
-| `Administration` | Administrator accounts |
+| `Administration` | Administrator accounts and optional expiration dates |
 | `Folder` | Per-administrator folder hierarchy |
 | `CaseStudy` | Groups boards within a folder |
 | `BoardConfiguration` | Dealer and vulnerability |
@@ -131,6 +132,8 @@ requirements.txt                 Python dependencies
 ## Implementation boundaries
 
 - Student registration and test assignment are performed by a signed-in administrator from Test → Student management. Students enter the numeric ID shown at registration and their password at Administrator → Student login; only assigned, incomplete tests are available, and a completed assignment cannot be run again.
+- Administrator → Export administrator data lets you select folders, cases, boards, and tests, then packages them for a separate administrator account. Required parent assets and test dependencies are included automatically; student accounts, assignments, and results are excluded.
+- Administrator → Set my account expiration changes only the signed-in administrator's own optional expiration date. Once expired, the account cannot sign in and any active session is signed out.
 - Each test run selects one candidate scenario per problem; candidate scenarios remain attached to the problem for subsequent runs.
 - The main integrated workflow includes administrator asset management, scenario-based table demonstration, test construction, and Lockdown test runs.
 - `dds3` is optional and is not installed by the requirements file. When available, the main table displays its double-dummy trick-count matrix; a broader DDS analysis dashboard is not integrated.

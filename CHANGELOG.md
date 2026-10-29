@@ -12,7 +12,10 @@
 
 ## 2026-10-29
 
+- Export selected administrator content to a separate account, allow importing while signed out, and exclude student accounts, assignments, and results.
+- Add self-service administrator account expiration; expired accounts cannot sign in and active sessions are signed out.
 - Arrange played cards at the four compass points around the trick center, preserve suit colors when reusing card widgets, and show DDS results in compact corner badges.
+- Increase DDS badge height so computed card values are fully visible.
 - Hide rule labels during student test playback while retaining them for robot decisions.
 - Shorten the demonstration control to **Demonstrate**/**Stop** and place **Record target** in the table's top bar.
 - Add independent asset-tree expand/collapse controls and Ctrl/Cmd keyboard shortcuts to resize or reset tree text; provide enough room for the **Duplicate** button label.

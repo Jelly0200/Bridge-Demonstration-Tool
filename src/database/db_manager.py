@@ -40,6 +40,11 @@ class DatabaseManager:
                 schema_script = f.read()
             conn.executescript(schema_script)
             self._migrate_label_color_constraint(conn)
+            admin_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(Administration)")
+            }
+            if "ExpiresAt" not in admin_columns:
+                conn.execute("ALTER TABLE Administration ADD COLUMN ExpiresAt TEXT")
             scenario_columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(Scenario)")
             }

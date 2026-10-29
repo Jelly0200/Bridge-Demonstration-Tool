@@ -108,7 +108,9 @@ class CardWidget(QFrame):
         self.dds_label.setObjectName("dds_card_value")
         self.dds_label.setProperty("bilingualExempt", True)
         self.dds_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dds_label.setFont(QFont("Arial", dds_font_size, QFont.Weight.Bold))
+        dds_font = QFont("Arial", dds_font_size, QFont.Weight.Bold)
+        self.dds_label.setFont(dds_font)
+        dds_height = max(dds_height, QFontMetrics(dds_font).height() + 4)
         self.dds_label.setFixedSize(dds_width, dds_height)
         self.dds_label.setStyleSheet(
             "color: #075985; background-color: #e0f2fe; border-radius: 2px;"

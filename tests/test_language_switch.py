@@ -2,10 +2,18 @@ import unittest
 from unittest.mock import patch
 
 from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QTreeWidgetItem
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QLabel,
+    QMessageBox,
+    QTreeWidgetItem,
+)
 
 from src.ui.main_window import MainWindow
 from src.ui.i18n import translate_text
+from src.security.passwords import hash_password
+from src.ui.dialogs.export_selection_dialog import ExportSelectionDialog
 
 
 class TestLanguageSwitch(unittest.TestCase):
@@ -113,6 +121,7 @@ class TestLanguageSwitch(unittest.TestCase):
                 "Administration Registration",
                 "Administration Login",
                 "Administration Logout",
+                "Set my account expiration",
                 "Student login",
                 "Export administrator data",
                 "Import administrator data",
@@ -170,9 +179,10 @@ class TestLanguageSwitch(unittest.TestCase):
     def test_content_transfer_actions_require_an_administrator(self):
         window = MainWindow()
         self.addCleanup(window.close)
+        window.active_admin_id = None
 
         self.assertFalse(window.action_export_admin_data.isEnabled())
-        self.assertFalse(window.action_import_admin_data.isEnabled())
+        self.assertTrue(window.action_import_admin_data.isEnabled())
         window.set_language("zh")
         self.assertEqual(window.action_export_admin_data.text(), "导出管理员数据")
         self.assertEqual(window.action_import_admin_data.text(), "导入管理员数据")
@@ -182,11 +192,45 @@ class TestLanguageSwitch(unittest.TestCase):
         self.assertTrue(window.action_export_admin_data.isEnabled())
         self.assertTrue(window.action_import_admin_data.isEnabled())
 
+    def test_export_tree_checks_descendants_and_allows_deselecting_a_child(self):
+        dialog = ExportSelectionDialog(
+            [
+                {"type": "folder", "id": 1, "parent_id": None, "name": "Lessons"},
+                {"type": "case", "id": 2, "folder_id": 1, "name": "Lessons / A"},
+                {"type": "case", "id": 3, "folder_id": 1, "name": "Lessons / B"},
+                {"type": "board", "id": 4, "case_id": 2, "name": "Board A"},
+                {"type": "board", "id": 5, "case_id": 3, "name": "Board B"},
+            ]
+        )
+        self.addCleanup(dialog.close)
+        folder = dialog.asset_tree.topLevelItem(0)
+        folder.setCheckState(0, Qt.CheckState.Checked)
+        self.assertEqual(
+            dialog.selected_assets(),
+            {"folders": [1], "cases": [2, 3], "boards": [4, 5], "tests": []},
+        )
+
+        folder.child(0).setCheckState(0, Qt.CheckState.Unchecked)
+        self.assertEqual(
+            dialog.selected_assets(),
+            {"folders": [], "cases": [3], "boards": [5], "tests": []},
+        )
+
     def test_export_prompts_twice_and_saves_encrypted_package(self):
         window = MainWindow()
         self.addCleanup(window.close)
         window.active_admin_id = 55
         export_path = "/tmp/bridge-workspace"
+        def accept_export_dialog(dialog):
+            dialog.asset_tree.topLevelItem(0).setCheckState(
+                0,
+                Qt.CheckState.Checked,
+            )
+            dialog.account_name_input.setText("content_owner")
+            dialog.account_password_input.setText("content owner password")
+            dialog.confirm_password_input.setText("content owner password")
+            return QDialog.DialogCode.Accepted
+
         with (
             patch(
                 "src.ui.main_window.QFileDialog.getSaveFileName",
@@ -200,24 +244,46 @@ class TestLanguageSwitch(unittest.TestCase):
                 ],
             ),
             patch("src.ui.main_window.ContentTransferService") as service_class,
+            patch(
+                "src.ui.main_window.exec_and_delete",
+                side_effect=accept_export_dialog,
+            ),
             patch("src.ui.main_window.show_message"),
         ):
+            service_class.return_value.list_export_assets.return_value = [
+                {"type": "folder", "id": 1, "name": "folder"},
+            ]
             window.export_admin_data()
 
         service_class.assert_called_once_with(window.repo.db)
+        service_class.return_value.list_export_assets.assert_called_once_with(55)
         service_class.return_value.export_admin_data.assert_called_once_with(
             55,
             f"{export_path}.bdtpack",
             "a strong portable passphrase",
+            selection={
+                "folders": [1],
+                "cases": [],
+                "boards": [],
+                "tests": [],
+            },
+            destination_account={
+                "name": "content_owner",
+                "password": "content owner password",
+            },
         )
 
     def test_import_verifies_and_confirms_before_adding_package(self):
         window = MainWindow()
         self.addCleanup(window.close)
-        window.active_admin_id = 56
-        window.active_admin_name = "receiver"
+        window.active_admin_id = None
+        window.active_admin_name = None
         payload = {
             "source_administrator": "sender",
+            "destination_administrator": {
+                "Name": "recipient",
+                "Password": hash_password("recipient password"),
+            },
             "tables": {"Folder": [{"Id": 1}], "Test": [{"Id": 1}]},
         }
         with (
@@ -238,9 +304,12 @@ class TestLanguageSwitch(unittest.TestCase):
                     None,
                 ],
             ),
-            patch.object(window, "_refresh_assets") as refresh_assets,
+            patch.object(window, "_activate_admin") as activate_admin,
         ):
             service_class.return_value.read_package.return_value = payload
+            service_class.return_value.import_admin_data.return_value = {
+                "destination_administrator_id": 88,
+            }
             window.import_admin_data()
 
         service_class.return_value.read_package.assert_called_once_with(
@@ -248,10 +317,10 @@ class TestLanguageSwitch(unittest.TestCase):
             "a strong portable passphrase",
         )
         service_class.return_value.import_admin_data.assert_called_once_with(
-            56,
+            None,
             payload,
         )
-        refresh_assets.assert_called_once()
+        activate_admin.assert_called_once_with(88, "recipient")
 
     def test_explorer_actions_localize_and_reuse_chinese_readme(self):
         window = MainWindow()

@@ -2,6 +2,7 @@
 import json
 import re
 import sqlite3
+from datetime import date
 from typing import List, Optional, Dict, Any
 from src.database.db_manager import DatabaseManager
 from src.database.models import (
@@ -31,6 +32,25 @@ class Repository:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM Administration WHERE Id = ?", (admin_id,))
             return Admin.from_row(cursor.fetchone())
+        finally:
+            conn.close()
+
+    def set_admin_expiration(self, admin_id: int, expires_on: Optional[date]):
+        if expires_on is not None and type(expires_on) is not date:
+            raise TypeError("expires_on must be a date or None.")
+        if expires_on is not None and expires_on < date.today():
+            raise ValueError("The expiration date cannot be in the past.")
+
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE Administration SET ExpiresAt = ? WHERE Id = ?",
+                (expires_on.isoformat() if expires_on else None, admin_id),
+            )
+            if cursor.rowcount == 0:
+                raise LookupError(f"Administrator {admin_id} was not found.")
+            conn.commit()
         finally:
             conn.close()
 
@@ -85,7 +105,16 @@ class Repository:
                 (name.strip(),),
             )
             row = cursor.fetchone()
-            if row is None or not verify_password(password, row["Password"]):
+            if row is None:
+                return None
+            expires_at = row["ExpiresAt"]
+            if expires_at:
+                try:
+                    if date.today() > date.fromisoformat(expires_at):
+                        return None
+                except ValueError:
+                    return None
+            if not verify_password(password, row["Password"]):
                 return None
 
             stored_password = row["Password"]
@@ -100,6 +129,7 @@ class Repository:
             return Admin(
                 id=row["Id"],
                 name=row["Name"],
+                expires_at=expires_at,
                 password=stored_password,
             )
         finally:

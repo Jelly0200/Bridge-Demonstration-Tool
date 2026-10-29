@@ -4,7 +4,8 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS Administration (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     Name TEXT NOT NULL UNIQUE,
-    Password TEXT NOT NULL
+    Password TEXT NOT NULL,
+    ExpiresAt TEXT NULL
 );
 
 -- 2. Folder Hierarchy (Self-referencing tree)

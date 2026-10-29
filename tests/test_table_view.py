@@ -89,6 +89,19 @@ class TestTableView(unittest.TestCase):
             all((card.width(), card.height()) == (44, 62) for card in north_hand.cards)
         )
 
+    def test_dds_card_values_have_enough_height_for_their_font(self):
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                card = CardWidget("SA", compact=compact)
+                card.set_dds_tricks(13)
+
+                self.assertFalse(card.dds_label.isHidden())
+                self.assertEqual(card.dds_label.text(), "13")
+                self.assertGreaterEqual(
+                    card.dds_label.height(),
+                    QFontMetrics(card.dds_label.font()).height() + 4,
+                )
+
     def test_playing_a_card_reuses_widgets_for_cards_still_in_each_hand(self):
         scenario = Scenario(
             id=1,
