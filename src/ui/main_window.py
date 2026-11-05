@@ -13,10 +13,12 @@ except ImportError:
     resource = None
 
 from PyQt6.QtCore import QObject, Qt, QTimer
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QColor, QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
+    QColorDialog,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -33,6 +35,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -40,6 +43,7 @@ from PyQt6.QtWidgets import (
     QToolBar,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from src.database.repository import Repository
@@ -63,6 +67,17 @@ from src.ui.i18n import (
 from src.ui.views.table_view import TableView
 from src.ui.views.test_construction_view import TestConstructionView
 from src.ui.views.tree_view import TreeView
+from src.ui.widgets.hand_widget import CardWidget
+
+
+DEFAULT_PANEL_STYLES = {
+    "asset_tree_width_px": 380,
+    "upper_panel_height_px": 44,
+    "central_panel_height_px": 600,
+    "asset_tree_color": "#111827",
+    "upper_panel_color": "#111827",
+    "central_panel_color": "#0b1120",
+}
 
 
 class LockdownTerminal(QWidget):
@@ -587,10 +602,13 @@ class MainWindow(QMainWindow):
         self.active_admin_id = None
         self.active_admin_name = None
         self.active_case_id = None
+        self.panel_styles = dict(DEFAULT_PANEL_STYLES)
+        self._applying_admin_preferences = False
         self.runtime_errors = deque(maxlen=10)
         self.lockdown_active = False
         self.lockdown_student_session = False
         self.lockdown_test = None
+        self.lockdown_test_preview = False
         self.lockdown_student_id = None
         self.lockdown_student_name = None
         self.lockdown_scenarios = []
@@ -601,11 +619,18 @@ class MainWindow(QMainWindow):
         self.lockdown_play_timer = QTimer(self)
         self.lockdown_play_timer.setInterval(500)
         self.lockdown_play_timer.timeout.connect(self._advance_lockdown_target)
+        self.admin_preferences_save_timer = QTimer(self)
+        self.admin_preferences_save_timer.setSingleShot(True)
+        self.admin_preferences_save_timer.setInterval(400)
+        self.admin_preferences_save_timer.timeout.connect(
+            self._save_admin_preferences
+        )
         self.init_ui()
         self.setMinimumSize(1280, 800)
         self.resize(1600, 1000)
         self.statusBar()
         self.language_controller.install(self)
+        self._apply_panel_styles(self.panel_styles, refresh_theme=False)
         self._apply_app_theme()
         self._update_admin_indicator()
         self.admin_expiration_timer = QTimer(self)
@@ -616,7 +641,10 @@ class MainWindow(QMainWindow):
         self.admin_expiration_timer.start()
 
     def _apply_app_theme(self):
-        self.setStyleSheet("""
+        central_panel_color = self.panel_styles["central_panel_color"]
+        if central_panel_color == DEFAULT_PANEL_STYLES["central_panel_color"]:
+            central_panel_color = self.table_view.application_background_color
+        stylesheet = """
             QMainWindow {
                 background-color: #0b1120;
             }
@@ -626,7 +654,6 @@ class MainWindow(QMainWindow):
             QWidget {
                 color: #e2e8f0;
                 font-family: "Aptos", "Arial", sans-serif;
-                font-size: 15px;
             }
             QToolBar {
                 background-color: #111827;
@@ -769,7 +796,77 @@ class MainWindow(QMainWindow):
                 border-radius: 4px;
                 min-height: 24px;
             }
-        """)
+        """
+        stylesheet = stylesheet.replace(
+            "color: #e2e8f0;",
+            f"color: {self.table_view.application_font_color};",
+            1,
+        )
+        stylesheet = stylesheet.replace(
+            "background-color: #0b1120;",
+            "background-color: "
+            f"{self.table_view.application_background_color};",
+            1,
+        )
+        stylesheet += f"""
+            QWidget#leftAssetPanel,
+            QTreeWidget#assetTree {{
+                background-color: {self.panel_styles["asset_tree_color"]};
+            }}
+            QWidget#upperTablePanel {{
+                background-color: {self.panel_styles["upper_panel_color"]};
+            }}
+            QWidget#centralTablePanel {{
+                background-color: {central_panel_color};
+            }}
+        """
+        self.setStyleSheet(stylesheet)
+        application = QApplication.instance()
+        if application is not None:
+            font = QFont(application.font())
+            font.setPixelSize(self.table_view.application_font_size)
+            application.setFont(font)
+            self.setFont(font)
+            card_widgets = tuple(self.findChildren(CardWidget))
+            for widget in self.findChildren(QWidget):
+                if any(
+                    card is widget or card.isAncestorOf(widget)
+                    for card in card_widgets
+                ):
+                    continue
+                widget_font = QFont(widget.font())
+                widget_font.setPixelSize(self.table_view.application_font_size)
+                widget.setFont(widget_font)
+        menu_bar = self.menuBar()
+        menu_bar.setStyleSheet(
+            "QMenuBar { "
+            f"background-color: {self.panel_styles['upper_panel_color']}; "
+            "color: #f1f5f9; "
+            f"min-height: {self.panel_styles['upper_panel_height_px']}px; "
+            f"font-size: {self.table_view.application_font_size}px; "
+            "border-bottom: 1px solid #334155; font-weight: 600; }"
+            "QMenuBar::item { background-color: transparent; "
+            "padding: 7px 14px; margin: 2px 3px; border-radius: 4px; }"
+            "QMenuBar::item:selected { background-color: #334155; }"
+        )
+
+    def _choose_application_font_color(self):
+        selected = QColorDialog.getColor(
+            QColor(self.table_view.application_font_color),
+            self,
+            "Application font color",
+        )
+        if selected.isValid():
+            self.table_view.set_application_font_color(selected.name())
+
+    def _choose_application_background_color(self):
+        selected = QColorDialog.getColor(
+            QColor(self.table_view.application_background_color),
+            self,
+            "Application background color",
+        )
+        if selected.isValid():
+            self.table_view.set_application_background_color(selected.name())
 
     def init_ui(self):
         self.create_upper_toolbar()
@@ -777,6 +874,7 @@ class MainWindow(QMainWindow):
         self.main_splitter = main_splitter
 
         self.left_widget = QWidget()
+        self.left_widget.setObjectName("leftAssetPanel")
         left_layout = QVBoxLayout(self.left_widget)
         left_layout.setContentsMargins(5, 5, 5, 5)
 
@@ -848,10 +946,16 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(self.left_stack)
 
         self.table_view = TableView(language_controller=self.language_controller)
+        self.table_view.preferences_changed.connect(
+            self._schedule_admin_preferences_save
+        )
+        self.table_view.font_style_changed.connect(self._apply_app_theme)
         self.table_view.mode_changed.connect(self.set_mode)
         self.table_view.scenario_completed.connect(
             self._on_lockdown_scenario_completed
         )
+        self.table_view.scenario_changed.connect(self._save_active_scenario)
+        self._build_preference_menu()
         self.content_stack = QStackedWidget()
         self.content_stack.addWidget(self.table_view)
         self.test_construction_view = TestConstructionView(
@@ -953,6 +1057,7 @@ class MainWindow(QMainWindow):
             "QMenuBar::item:selected { background-color: #334155; }"
         )
         self.administration_menu = bar.addMenu("Administrator")
+        self.preference_menu = bar.addMenu("Preference")
         self.action_admin_register = self.administration_menu.addAction(
             "Administration Registration", self.on_register_clicked
         )
@@ -985,14 +1090,6 @@ class MainWindow(QMainWindow):
 
         self.tool_menu = bar.addMenu("Tool")
         self.action_monitor = self.tool_menu.addAction("Monitor", self.open_monitor)
-        self.action_robot_card_sound = self.tool_menu.addAction(
-            "Robot card sound"
-        )
-        self.action_robot_card_sound.setCheckable(True)
-        self.action_robot_card_sound.setChecked(True)
-        self.action_robot_card_sound.toggled.connect(
-            self.set_robot_card_sound_enabled
-        )
         self.tool_menu.addAction("Instruction", self.open_instructions)
         self.tool_menu.addAction("Language", self.choose_language)
         self.tool_menu.addAction(
@@ -1025,6 +1122,239 @@ class MainWindow(QMainWindow):
             "requirements.txt",
             lambda: self.show_project_document("requirements.txt"),
         )
+        self.explorer_menu.addSeparator()
+
+    def _build_preference_menu(self):
+        table = self.table_view
+        dds_menu = self.preference_menu.addMenu("DDS")
+        dds_menu.addAction(table.dds_visibility_action)
+        dds_menu.addSeparator()
+        for action in table.dds_mode_actions.values():
+            dds_menu.addAction(action)
+
+        styles_menu = self.preference_menu.addMenu("Styles")
+        self._add_preference_slider(
+            styles_menu,
+            "Card width (px)",
+            table.card_size_slider,
+            " px",
+        )
+        self._add_preference_slider(
+            styles_menu,
+            "Card suit symbol size (px)",
+            table.suit_symbol_size_slider,
+            " px",
+        )
+        self._add_preference_slider(
+            styles_menu,
+            "Application font size (px)",
+            table.font_size_slider,
+            " px",
+        )
+        self.font_color_action = QAction("Application font color...", self)
+        self.font_color_action.triggered.connect(
+            self._choose_application_font_color
+        )
+        styles_menu.addAction(self.font_color_action)
+        self.background_color_action = QAction(
+            "Application background color...",
+            self,
+        )
+        self.background_color_action.triggered.connect(
+            self._choose_application_background_color
+        )
+        styles_menu.addAction(self.background_color_action)
+        styles_menu.addSeparator()
+
+        self.asset_tree_width_slider = QSlider(
+            Qt.Orientation.Horizontal,
+            self,
+        )
+        self.asset_tree_width_slider.setRange(280, 650)
+        self.asset_tree_width_slider.setTracking(False)
+        self.asset_tree_width_slider.setValue(
+            self.panel_styles["asset_tree_width_px"]
+        )
+        self.asset_tree_width_slider.valueChanged.connect(
+            self._set_asset_tree_width
+        )
+        self._add_preference_slider(
+            styles_menu,
+            "Asset tree width (px)",
+            self.asset_tree_width_slider,
+            " px",
+        )
+
+        self.upper_panel_height_slider = QSlider(
+            Qt.Orientation.Horizontal,
+            self,
+        )
+        self.upper_panel_height_slider.setRange(36, 100)
+        self.upper_panel_height_slider.setTracking(False)
+        self.upper_panel_height_slider.setValue(
+            self.panel_styles["upper_panel_height_px"]
+        )
+        self.upper_panel_height_slider.valueChanged.connect(
+            self._set_upper_panel_height
+        )
+        self._add_preference_slider(
+            styles_menu,
+            "Upper panel height (px)",
+            self.upper_panel_height_slider,
+            " px",
+        )
+
+        self.central_panel_height_slider = QSlider(
+            Qt.Orientation.Horizontal,
+            self,
+        )
+        self.central_panel_height_slider.setRange(400, 1200)
+        self.central_panel_height_slider.setTracking(False)
+        self.central_panel_height_slider.setValue(
+            self.panel_styles["central_panel_height_px"]
+        )
+        self.central_panel_height_slider.valueChanged.connect(
+            self._set_central_panel_height
+        )
+        self._add_preference_slider(
+            styles_menu,
+            "Central panel height (px)",
+            self.central_panel_height_slider,
+            " px",
+        )
+
+        for key, title in (
+            ("asset_tree_color", "Asset tree color..."),
+            ("upper_panel_color", "Upper panel color..."),
+            ("central_panel_color", "Central panel color..."),
+        ):
+            action = QAction(title, self)
+            action.triggered.connect(
+                lambda _checked=False, color_key=key, caption=title:
+                self._choose_panel_color(color_key, caption)
+            )
+            styles_menu.addAction(action)
+
+        robot_menu = self.preference_menu.addMenu("Robot")
+        for action in table.rule_actions.values():
+            robot_menu.addAction(action)
+        robot_menu.addSeparator()
+        self._add_preference_slider(
+            robot_menu,
+            "Robot delay (ms)",
+            table.robot_speed_slider,
+            " ms",
+        )
+
+        sound_menu = self.preference_menu.addMenu("Sound")
+        sound_menu.addAction(table.robot_card_sound_action)
+        self._add_preference_slider(
+            sound_menu,
+            "Sound strength (%)",
+            table.sound_volume_slider,
+            "%",
+        )
+
+        view_menu = self.preference_menu.addMenu("View")
+        for action in table.view_actions.values():
+            view_menu.addAction(action)
+        view_menu.addSeparator()
+        view_menu.addAction(table.rotate_action)
+
+        label_menu = self.explorer_menu.addMenu("Labels")
+        label_menu.addAction(table.label_action)
+
+    def _add_preference_slider(self, menu, title, slider, unit):
+        container = QWidget(menu)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.setSpacing(8)
+        label = QLabel(title, container)
+        label.setMinimumWidth(118)
+        value_label = QLabel(f"{slider.value()}{unit}", container)
+        value_label.setMinimumWidth(54)
+        value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        slider.setMinimumWidth(180)
+        slider.valueChanged.connect(
+            lambda value, target=value_label, suffix=unit: target.setText(
+                f"{value}{suffix}"
+            )
+        )
+        layout.addWidget(label)
+        layout.addWidget(slider)
+        layout.addWidget(value_label)
+        action = QWidgetAction(menu)
+        action.setDefaultWidget(container)
+        menu.addAction(action)
+
+    def _apply_panel_styles(self, styles, refresh_theme=True):
+        self.panel_styles = {
+            **DEFAULT_PANEL_STYLES,
+            **styles,
+        }
+        for slider, key in (
+            (self.asset_tree_width_slider, "asset_tree_width_px"),
+            (self.upper_panel_height_slider, "upper_panel_height_px"),
+            (self.central_panel_height_slider, "central_panel_height_px"),
+        ):
+            slider.blockSignals(True)
+            slider.setValue(self.panel_styles[key])
+            slider.blockSignals(False)
+
+        self._set_asset_tree_width(
+            self.panel_styles["asset_tree_width_px"],
+            persist=False,
+        )
+        self._set_upper_panel_height(
+            self.panel_styles["upper_panel_height_px"],
+            persist=False,
+        )
+        self._set_central_panel_height(
+            self.panel_styles["central_panel_height_px"],
+            persist=False,
+        )
+        if refresh_theme:
+            self._apply_app_theme()
+
+    def _set_asset_tree_width(self, width, persist=True):
+        self.panel_styles["asset_tree_width_px"] = width
+        if hasattr(self, "main_splitter"):
+            total_width = max(
+                sum(self.main_splitter.sizes()),
+                self.main_splitter.width(),
+            )
+            self.main_splitter.setSizes(
+                [width, max(600, total_width - width)]
+            )
+        if persist:
+            self._schedule_admin_preferences_save()
+
+    def _set_upper_panel_height(self, height, persist=True):
+        self.panel_styles["upper_panel_height_px"] = height
+        if hasattr(self, "table_view"):
+            self.table_view.top_bar_widget.setFixedHeight(height)
+        if persist:
+            self._apply_app_theme()
+            self._schedule_admin_preferences_save()
+
+    def _set_central_panel_height(self, height, persist=True):
+        self.panel_styles["central_panel_height_px"] = height
+        if hasattr(self, "table_view"):
+            self.table_view.set_central_panel_height(height)
+        if persist:
+            self._schedule_admin_preferences_save()
+
+    def _choose_panel_color(self, key, title):
+        selected = QColorDialog.getColor(
+            QColor(self.panel_styles[key]),
+            self,
+            title,
+        )
+        if not selected.isValid():
+            return
+        self.panel_styles[key] = selected.name()
+        self._apply_app_theme()
+        self._schedule_admin_preferences_save()
 
     def _install_tree_shortcuts(self):
         self.shortcut_add_asset = QShortcut(QKeySequence("Insert"), self.tree_view)
@@ -1036,9 +1366,6 @@ class MainWindow(QMainWindow):
 
     def toggle_language(self):
         self.choose_language()
-
-    def set_robot_card_sound_enabled(self, enabled: bool):
-        self.table_view.set_robot_card_sound_enabled(enabled)
 
     def choose_language(self):
         labels = ["English", "中文"]
@@ -1064,12 +1391,6 @@ class MainWindow(QMainWindow):
         self.btn_language.setText("中文" if language == "en" else "English")
         self.btn_language.setToolTip(
             translate_text("Switch between Chinese and English.", language)
-        )
-        self.table_view.btn_dds_display.setToolTip(
-            translate_text(
-                "Toggle between side-to-play tricks and contract trick margin.",
-                language,
-            )
         )
 
     def show_keyboard_shortcuts(self):
@@ -1537,6 +1858,8 @@ class MainWindow(QMainWindow):
     def on_logout_clicked(self):
         if self.active_admin_id is None:
             return
+        if not self._flush_admin_preferences():
+            return
         try:
             self._save_active_scenario()
         except (LookupError, sqlite3.Error, ValueError) as error:
@@ -1545,6 +1868,7 @@ class MainWindow(QMainWindow):
         self._clear_admin_session("Administrator signed out")
 
     def _clear_admin_session(self, status_message):
+        self._flush_admin_preferences()
         self.active_admin_id = None
         self.active_admin_name = None
         self.active_case_id = None
@@ -1630,8 +1954,21 @@ class MainWindow(QMainWindow):
         )
 
     def _activate_admin(self, admin_id: int, name=None, default_case_id=None):
+        if self.active_admin_id is not None and not self._flush_admin_preferences():
+            return
+        preferences = self.repo.get_admin_preferences(admin_id)
+        self.admin_preferences_save_timer.stop()
         self.active_admin_id = admin_id
         self.active_admin_name = name
+        if preferences is not None:
+            self._applying_admin_preferences = True
+            try:
+                self.table_view.apply_admin_preferences(preferences)
+                self._apply_panel_styles(
+                    preferences.get("panel_styles", DEFAULT_PANEL_STYLES)
+                )
+            finally:
+                self._applying_admin_preferences = False
         if self.active_admin_name is None:
             admin = self.repo.get_admin_by_id(admin_id)
             self.active_admin_name = admin.name if admin else f"#{admin_id}"
@@ -1639,6 +1976,37 @@ class MainWindow(QMainWindow):
         self.tree_view.load_tree_data(admin_id=admin_id)
         self._update_admin_indicator()
         self._update_asset_actions()
+
+    def _schedule_admin_preferences_save(self):
+        if (
+            self.active_admin_id is not None
+            and not self._applying_admin_preferences
+            and not self.lockdown_active
+        ):
+            self.admin_preferences_save_timer.start()
+
+    def _flush_admin_preferences(self) -> bool:
+        self.admin_preferences_save_timer.stop()
+        if self.active_admin_id is None or self._applying_admin_preferences:
+            return True
+        try:
+            preferences = self.table_view.get_admin_preferences()
+            preferences["panel_styles"] = dict(self.panel_styles)
+            self.repo.save_admin_preferences(
+                self.active_admin_id,
+                preferences,
+            )
+        except (LookupError, sqlite3.Error, TypeError, ValueError) as error:
+            self._show_asset_error(error)
+            self.statusBar().showMessage(
+                "Unable to save administrator preferences",
+                5000,
+            )
+            return False
+        return True
+
+    def _save_admin_preferences(self):
+        self._flush_admin_preferences()
 
     def _update_admin_indicator(self):
         name = self.active_admin_name or "Not signed in"
@@ -2303,6 +2671,8 @@ class MainWindow(QMainWindow):
         )
 
     def _activate_lockdown(self, welcome_message: str) -> bool:
+        if not self._flush_admin_preferences():
+            return False
         try:
             self._save_active_scenario()
             if self.current_mode != "NORMAL":
@@ -2326,6 +2696,7 @@ class MainWindow(QMainWindow):
     def _exit_lockdown(self):
         self.lockdown_play_timer.stop()
         self.lockdown_test = None
+        self.lockdown_test_preview = False
         self.lockdown_student_id = None
         self.lockdown_student_name = None
         self.lockdown_student_session = False
@@ -2351,6 +2722,12 @@ class MainWindow(QMainWindow):
             "Lockdown mode ended; all accounts signed out.",
             4000,
         )
+
+    def closeEvent(self, event):
+        if not self._flush_admin_preferences():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def execute_lockdown_command(self, command: str):
         if not self.lockdown_active:
@@ -2428,14 +2805,11 @@ class MainWindow(QMainWindow):
             test_playback=test_mode,
         )
         self.table_view.current_side = scenario.declarer
-        self.table_view.btn_side.setText(f"Human seat: {scenario.declarer}")
         self.table_view.view_mode = "HIDDEN"
-        self.table_view.btn_view_mode.setText("View: Hidden")
+        self.table_view.view_actions["HIDDEN"].setChecked(True)
         self.table_view._apply_view_mode()
         self.table_view.rule_mode = "LABEL" if test_mode else "TARGET"
-        self.table_view.btn_rule_mode.setText(
-            f"Rule: {self.table_view.rule_mode.title()}"
-        )
+        self.table_view.rule_actions[self.table_view.rule_mode].setChecked(True)
         if not self.table_view.set_mode("DEMONSTRATION"):
             raise ValueError(f"Scenario {scenario_id} is not ready to play.")
         if test_mode:
@@ -2489,15 +2863,16 @@ class MainWindow(QMainWindow):
                 "Sign in as an administrator before running a test.", 5000
             )
             return
-        if not self.enter_lockdown():
-            return
         try:
             tests = self.repo.get_tests_by_admin(self.active_admin_id)
         except sqlite3.Error as error:
-            self.lockdown_terminal.write(f"Unable to load tests: {error}")
+            self.statusBar().showMessage(
+                f"Unable to load tests: {error}",
+                8000,
+            )
             return
         if not tests:
-            self.lockdown_terminal.write("There are no tests to run.")
+            self.statusBar().showMessage("There are no tests to run.", 5000)
             return
         name, accepted = QInputDialog.getItem(
             self,
@@ -2507,13 +2882,15 @@ class MainWindow(QMainWindow):
             0,
             False,
         )
-        if accepted:
-            self.start_lockdown_test(name)
+        if not accepted or not self.enter_lockdown():
+            return
+        self.start_lockdown_test(name)
 
     def start_lockdown_test(self, test_name: str):
         if self.lockdown_test is not None:
             self.lockdown_terminal.write("A test is already in progress.")
             return
+        self.lockdown_test_preview = False
         try:
             if self.lockdown_student_session:
                 if self.lockdown_student_id is None:
@@ -2557,40 +2934,20 @@ class MainWindow(QMainWindow):
         if not scenarios:
             self.lockdown_terminal.write("This test has no scenarios.")
             return
-        if not self.lockdown_student_session:
-            dialog = self._prepare_dialog(
-                StudentIdentityDialog(self.repo, test["name"], self)
-            )
-            if not exec_and_delete(dialog):
-                return
-            student_id = dialog.authenticated_student["id"]
-            try:
-                available_tests = self.repo.get_available_tests_for_student(
-                    student_id
-                )
-            except sqlite3.Error as error:
-                self.lockdown_terminal.write(
-                    f"Unable to verify test assignment: {error}"
-                )
-                return
-            if not any(item["id"] == test["id"] for item in available_tests):
-                show_message(
-                    self,
-                    "warning",
-                    "Test unavailable",
-                    "This test is not assigned to the student or has already "
-                    "been completed.",
-                )
-                return
-            self.lockdown_student_id = student_id
-            self.lockdown_student_name = dialog.authenticated_student["name"]
+        if self.lockdown_student_session:
+            self.lockdown_test_preview = False
+        else:
+            self.lockdown_test_preview = True
         self.lockdown_test = test
         self.lockdown_scenarios = scenarios
         self.lockdown_scenario_index = 0
         self.lockdown_results = []
         self.lockdown_score = 0
         self.lockdown_terminal.write(
-            f"Test {test['name']} started for {self.lockdown_student_id}."
+            f"Test preview {test['name']} started."
+            if self.lockdown_test_preview
+            else f"Test {test['name']} started for "
+            f"{self.lockdown_student_id}."
         )
         self._start_next_test_scenario()
 
@@ -2716,32 +3073,46 @@ class MainWindow(QMainWindow):
         test = self.lockdown_test
         if test is None:
             return
-        try:
-            self.repo.save_test_result(
-                test["id"],
-                self.lockdown_student_id,
-                self.lockdown_results,
-                self.lockdown_score,
-            )
-        except (LookupError, sqlite3.Error) as error:
-            self.runtime_errors.append(f"Test result save failed: {error}")
-            self.lockdown_terminal.write(f"Could not save test result: {error}")
-            show_message(
-                self,
-                "critical",
-                "Result could not be saved",
-                str(error),
-            )
-            return
-        dialog = TestScenarioDialog(
-            "Test complete",
-            test["name"],
-            details=(
+        if not self.lockdown_test_preview:
+            try:
+                self.repo.save_test_result(
+                    test["id"],
+                    self.lockdown_student_id,
+                    self.lockdown_results,
+                    self.lockdown_score,
+                )
+            except (LookupError, sqlite3.Error) as error:
+                self.runtime_errors.append(f"Test result save failed: {error}")
+                self.lockdown_terminal.write(
+                    f"Could not save test result: {error}"
+                )
+                show_message(
+                    self,
+                    "critical",
+                    "Result could not be saved",
+                    str(error),
+                )
+                return
+        details = (
+            (("Administrator preview", "Results are not saved."),
+             ("Total score", str(self.lockdown_score)))
+            if self.lockdown_test_preview
+            else (
                 ("Student ID", str(self.lockdown_student_id)),
                 ("Student name", self.lockdown_student_name or ""),
                 ("Total score", str(self.lockdown_score)),
-            ),
+            )
+        )
+        dialog = TestScenarioDialog(
+            "Test complete",
+            test["name"],
+            details=details,
             action_text="Close",
+            eyebrow=(
+                "ADMINISTRATOR PREVIEW"
+                if self.lockdown_test_preview
+                else "TEST SESSION"
+            ),
             language=self.language_controller.language,
             parent=self,
         )
@@ -2750,6 +3121,7 @@ class MainWindow(QMainWindow):
             f"Test complete. Score: {self.lockdown_score}."
         )
         self.lockdown_test = None
+        self.lockdown_test_preview = False
         self.lockdown_scenarios = []
         self.lockdown_current_problem = None
         if self.lockdown_student_session:

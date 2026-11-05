@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QTextBrowser,
     QVBoxLayout,
 )
 
@@ -21,6 +22,7 @@ class TestScenarioDialog(QDialog):
         details: tuple[tuple[str, str], ...] = (),
         information: str = "",
         action_text: str = "Continue",
+        eyebrow: str = "TEST SESSION",
         language: str = "en",
         parent=None,
     ):
@@ -34,9 +36,9 @@ class TestScenarioDialog(QDialog):
         layout.setContentsMargins(26, 24, 26, 22)
         layout.setSpacing(16)
 
-        eyebrow = QLabel(translate_text("TEST SESSION", language))
-        eyebrow.setObjectName("eyebrow")
-        layout.addWidget(eyebrow)
+        eyebrow_label = QLabel(translate_text(eyebrow, language))
+        eyebrow_label.setObjectName("eyebrow")
+        layout.addWidget(eyebrow_label)
 
         title_label = QLabel(translate_text(heading, language))
         title_label.setObjectName("dialogHeading")
@@ -75,9 +77,13 @@ class TestScenarioDialog(QDialog):
                 info_card,
             )
             info_heading.setObjectName("informationHeading")
-            info_text = QLabel(information, info_card)
+            info_text = QTextBrowser(info_card)
             info_text.setObjectName("informationText")
-            info_text.setWordWrap(True)
+            info_text.setPlainText(information)
+            info_text.setOpenLinks(False)
+            info_text.setFrameShape(QFrame.Shape.NoFrame)
+            info_text.setMinimumHeight(96)
+            info_text.setMaximumHeight(300)
             info_layout.addWidget(info_heading)
             info_layout.addWidget(info_text)
             layout.addWidget(info_card)
@@ -102,40 +108,42 @@ class TestScenarioDialog(QDialog):
             }
             QLabel#eyebrow {
                 color: #38bdf8;
-                font-size: 11px;
                 font-weight: 700;
                 letter-spacing: 1px;
             }
             QLabel#dialogHeading {
                 color: #f8fafc;
-                font-size: 23px;
                 font-weight: 700;
             }
-            QFrame#metricCard, QFrame#informationCard {
+            QFrame#metricCard {
                 background-color: #172338;
                 border: 1px solid #334155;
                 border-radius: 9px;
             }
+            QFrame#informationCard {
+                background-color: #111f33;
+                border: 1px solid #334155;
+                border-left: 4px solid #38bdf8;
+                border-radius: 8px;
+            }
             QLabel#metricLabel, QLabel#informationHeading {
                 color: #94a3b8;
-                font-size: 12px;
                 font-weight: 600;
             }
             QLabel#metricValue {
                 color: #f8fafc;
-                font-size: 17px;
                 font-weight: 700;
             }
-            QLabel#informationText {
+            QTextBrowser#informationText {
                 color: #e2e8f0;
-                font-size: 14px;
+                background-color: transparent;
+                selection-background-color: #0e7490;
             }
             QPushButton#primaryAction {
                 background-color: #0891b2;
                 border: 1px solid #22d3ee;
                 border-radius: 6px;
                 color: #f8fafc;
-                font-size: 14px;
                 font-weight: 700;
                 min-width: 130px;
                 padding: 9px 16px;

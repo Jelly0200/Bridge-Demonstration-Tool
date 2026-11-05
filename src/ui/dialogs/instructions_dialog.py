@@ -39,9 +39,10 @@ stored locally in SQLite.
   Use **Ctrl/Cmd + +**, **Ctrl/Cmd + -**, or **Ctrl/Cmd + 0** to resize or reset
   the tree text; these actions only affect this tree.
 
-- Use the **Administrator**, **Tool**, **Test**, and **Explorer** menus for
-  account, application, test, and project-document actions. Use **Explorer** to
-  read `README.md` and `requirements.txt`; asset actions remain in the asset tree.
+- Use **Preference** for DDS, label, style, robot, and view options. Use the
+  **Administrator**, **Tool**, **Test**, and **Explorer** menus for account,
+  application, test, and project-document actions. Use **Explorer** to read
+  `README.md` and `requirements.txt`; asset actions remain in the asset tree.
 - **Tool > Language** opens a choice dialog before changing the interface
   language. **Tool > Keyboard shortcuts** opens a reference for the available
   keyboard and context-menu shortcuts.
@@ -62,13 +63,19 @@ stored locally in SQLite.
 
 ## Robot rules in Normal mode
 
-Use Label rules to annotate cards, or Target rules to record a target sequence.
-Right-click a card (Control-click on macOS) to edit its label. Sequence numbers
-are counted independently for each color. In the orders below, **uncolored**
+Use **Preference > Robot** to choose whether robot-controlled seats follow
+labels or a recorded sequence. In Analysis view, right-click a card
+(Control-click on macOS) to edit its label. Sequence numbers are counted
+independently for each color. Use **Preference > Labels > Define color jobs**
+to customize each color's role by play phase. In the orders below, **uncolored**
 means a card without a label; **DDS-best group** means the legal cards with the
 highest DDS result for the current position.
 
-**Core Principle**: Only **Red** (for leading) and **Blue** (for discarding) can force the robot to play a card outside the DDS-best group (i.e., non-optimal plays to test human players). All other colors strictly select from within the **DDS-best group**.
+To create a recorded sequence, play all 52 cards in Analysis view. The
+**Record target** button appears after the deal is complete. Clicking it saves
+the sequence with the scenario and resets the table for playback.
+
+**Default behavior**: Only **Red** while leading and **Blue** while discarding can force a card outside the DDS-best group (i.e., a non-optimal play to test human players). Other colors select from within the **DDS-best group** by default. These jobs can be changed in **Preference > Labels > Define color jobs**.
 
 ### Leading
 
@@ -112,16 +119,18 @@ Within the DDS-best group, select the first available card in this priority orde
 
 ## Demonstrations and scenarios
 
-In Demonstration mode, robots play the non-human seats using either the recorded
-Target sequence or Label rules. Choose Analysis or Hidden view to switch between
-a double-dummy perspective and a real-game perspective. In a Hidden-view
+In Demonstration mode, robots play non-human seats using either the recorded
+sequence or label rules. Choose **Preference > View > Analysis** or **Hidden**
+to switch between a double-dummy perspective and a real-game perspective. In a Hidden-view
 demonstration, a human on the declaring side sees declarer and dummy face up. A
 human on defense sees their own hand; dummy is revealed after they play their
 first card in the opening trick. Their partner's hand and declarer's hand are
-invisible. Robot plays are separated by a short pause. Toggle **Tool > Robot
-card sound** to enable or disable the card-play sound effect.
+invisible. Robot plays are separated by a configurable pause. Use
+the horizontal slider in **Preference > Robot** to set the playback delay, and
+choose a sound or turn it off in **Preference > Sound**.
 
-A scenario's optional plain-text **Information** can be edited in **Settings**.
+A scenario's optional plain-text **Information** can be edited from the central
+**Bidding** menu.
 It is shown to students during a test and remains linked to the scenario through
 the test-scenario relationship.
 

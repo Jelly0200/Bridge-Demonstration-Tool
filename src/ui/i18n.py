@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any
 
 from PyQt6 import sip
@@ -12,11 +13,40 @@ from PyQt6.QtWidgets import QMessageBox, QWidget
 ENGLISH_TO_CHINESE = {
     "Bridge Demonstration Tool": "桥牌演示工具",
     "Settings": "设置",
+    "Bidding": "叫牌",
+    "Preference": "偏好设置",
+    "Labels": "标签",
+    "Styles": "样式",
+    "Application font size (px)": "应用字体大小（像素）",
+    "Application font color...": "应用字体颜色...",
+    "Application font color": "应用字体颜色",
+    "Application background color...": "应用背景颜色...",
+    "Robot": "机器人",
+    "Sound": "音效",
+    "Sound strength (%)": "音量强度（%）",
+    "Play card sound": "播放出牌音效",
+    "DDS": "DDS",
+    "View": "视图",
+    "Define color jobs...": "定义颜色用途...",
+    "Card size": "牌张大小",
+    "Card width (px)": "牌张宽度（像素）",
+    "Card suit symbol size (px)": "牌面花色符号大小（像素）",
+    "Robot delay (ms)": "机器人出牌间隔（毫秒）",
+    "Standard": "标准",
+    "Large": "大",
+    "Follow recorded sequence": "跟随记录序列",
+    "Follow labels": "跟随标签",
+    "Speed": "速度",
+    "Slow": "慢",
+    "Normal": "正常",
+    "Fast": "快",
     "View: Analysis": "视图：分析",
     "View: Hidden": "视图：隐藏",
     "Mode: Normal": "模式：普通",
     "Mode: Demonstration": "模式：演示",
     "Demonstrate": "演示",
+    "Start": "开始",
+    "End": "结束",
     "Stop": "停止",
     "Demonstration active": "演示进行中",
     "Rule: Label": "规则：标签",
@@ -34,7 +64,52 @@ ENGLISH_TO_CHINESE = {
     "Next move": "下一步",
     "Reset": "重置",
     "Monitor": "监控",
-    "Robot card sound": "机器人出牌音效",
+    "Off": "关闭",
+    "Show DDS matrix": "显示 DDS 矩阵",
+    "Auction": "叫牌过程",
+    "Bidding route": "叫牌路线",
+    "Level": "阶数",
+    "Tricks": "墩数",
+    "Contract tricks": "定约墩数",
+    "Label cards": "标记牌张",
+    "Show label definition": "显示标签定义",
+    "Label definitions": "标签定义",
+    "Current label-color jobs used by the robot.": "机器人当前使用的颜色标签规则。",
+    "Colors are checked in the listed order. OVERRIDE jobs run before DDS-best selection; FIRST and LAST choose the lowest or highest label sequence among DDS-best cards.": "颜色按照列出的顺序检查。OVERRIDE 规则在 DDS 最佳牌筛选前执行；FIRST 和 LAST 分别从 DDS 最佳牌中选择标签顺序最小或最大的牌。",
+    "SCENARIO INFORMATION": "场景信息",
+    "ADMINISTRATOR PREVIEW": "管理员预览",
+    "Administrator preview": "管理员预览",
+    "Results are not saved.": "结果不会保存。",
+    "Record target": "记录目标",
+    "Load or create a scenario before recording a target.": "记录目标前，请先加载或创建场景。",
+    "Play all 52 cards in Analysis before recording a target.": "请在分析视图中打完 52 张牌后再记录目标。",
+    "Target sequence recorded: 52 cards.": "已记录目标序列：52 张牌。",
+    "Define color jobs": "定义颜色用途",
+    "Choose how each color affects robot card selection by play phase.": "选择每种颜色在不同出牌阶段对机器人选牌的影响。",
+    "Leading": "首攻",
+    "Following suit": "跟牌",
+    "Discarding": "垫牌",
+    "Color": "颜色",
+    "Job": "用途",
+    "Play phase": "出牌阶段",
+    "Priority": "优先级",
+    "Robot action": "机器人操作",
+    "Ignore": "忽略",
+    "First sequence in DDS-best group": "在 DDS 最佳牌组中优先最小顺序",
+    "Last sequence in DDS-best group": "在 DDS 最佳牌组中优先最大顺序",
+    "Override DDS, first sequence": "忽略 DDS，优先最小顺序",
+    "Override DDS, last sequence": "忽略 DDS，优先最大顺序",
+    "First label sequence among DDS-best cards": "在 DDS 最佳牌中选择标签顺序最小的牌",
+    "Last label sequence among DDS-best cards": "在 DDS 最佳牌中选择标签顺序最大的牌",
+    "Override DDS: first label sequence": "忽略 DDS，选择标签顺序最小的牌",
+    "Override DDS: last label sequence": "忽略 DDS，选择标签顺序最大的牌",
+    "Asset tree width (px)": "资源树宽度（像素）",
+    "Upper panel height (px)": "上方区域高度（像素）",
+    "Central panel height (px)": "中央区域高度（像素）",
+    "Asset tree color...": "资源树颜色...",
+    "Upper panel color...": "上方区域颜色...",
+    "Central panel color...": "中央区域颜色...",
+    "Restore defaults": "恢复默认值",
     "Control Toolbar": "控制工具栏",
     "Instructions": "使用说明",
     "Administrator:": "管理员：",
@@ -76,7 +151,6 @@ ENGLISH_TO_CHINESE = {
     "Monitor unavailable": "监控不可用",
     "Unable to read monitoring statistics: ": "无法读取监控统计信息：",
     "Asset operation failed: ": "资源操作失败：",
-    "Record target": "记录目标",
     "Stop recording": "停止记录",
     "Demonstration complete": "演示完成",
     "Final result: ": "最终结果：",
@@ -361,18 +435,18 @@ ENGLISH_TO_CHINESE = {
     "Select a scenario to view its key play signal.": "选择一个场景以查看其关键出牌信息。",
     "Double-click a scenario to display its deal and play signal.": "双击场景以显示牌局和出牌信息。",
     "No scenario is loaded. Double-click a scenario to display it.": "尚未加载场景。双击一个场景以显示内容。",
-    "Recording target sequence. Play legal cards in turn order.": "正在记录目标序列。请按出牌顺序打出合法牌。",
     "Passed out — no card-play demonstration.": "不叫定约——没有出牌演示。",
-    "Use Settings to enter a complete, legal auction before card play.": "请先在“设置”中输入完整且合法的叫牌过程。",
-    "Record a target sequence before demonstration.": "请先记录目标序列，再开始演示。",
+    "Use Bidding to enter a complete, legal auction before card play.": "请先在“叫牌”中输入完整且合法的叫牌过程。",
+    "Play all 52 cards in Analysis and record the target sequence.": "请在分析视图中打完 52 张牌并记录目标序列。",
+    "Complete the scenario setup before demonstration.": "请先完成场景设置，再开始演示。",
     "Play complete.": "牌局已结束。",
     "Next move is available only for target-rule demonstrations.": "“下一步”仅适用于目标规则演示。",
     "The saved target sequence is complete.": "已完成保存的目标序列。",
     "Target card {card} is not legal for {player or 'the current position'}.": "目标牌 {card} 对 {player or '当前位置'} 不合法。",
     "Target card {card} could not be played.": "无法打出目标牌 {card}。",
-    "Target recording requires Analysis view, Normal mode, Rule: Target, and a completed auction.": "记录目标需要分析视图、普通模式、目标规则以及完整叫牌过程。",
-    "Target recording requires Analysis view, Normal mode, ": "记录目标需要分析视图、普通模式、",
-    "Rule: Target, and a completed auction.": "目标规则以及完整叫牌过程。",
+    "The completed play does not contain 52 unique cards.": "已完成的牌局不包含 52 张不同的牌。",
+    "The recorded sequence requires ": "记录序列要求打出 ",
+    "Target sequence recorded: 52 cards.": "已记录目标序列：52 张牌。",
     "Select a label color for ": "选择标签颜色：",
     "Label color for ": "标签颜色：",
     "Apply": "应用",
@@ -443,7 +517,6 @@ ENGLISH_TO_CHINESE = {
     "Sign in or register before adding assets.": "请先登录或注册，再添加资源。",
     "Switch between Chinese and English.": "切换中英文。",
     "Create or load a scenario before changing settings.": "请先创建或加载场景，再修改设置。",
-    "Complete the scenario setup and stop recording before demonstration.": "请先完成场景设置并停止记录，再开始演示。",
     "Complete the scenario auction and contract before demonstration.": "请先完成场景叫牌和定约设置，再开始演示。",
     "Administrator: ": "管理员：",
     "Current administrator: ": "当前管理员：",
@@ -462,7 +535,6 @@ ENGLISH_TO_CHINESE = {
     "Demonstration mode selected": "已选择演示模式",
     "Test construction selected": "已选择练习构建模式",
     "Target play: ": "目标出牌：",
-    "Recording target sequence: ": "正在记录目标序列：",
     " cards.": " 张牌。",
     "<br>Next: ": "<br>下一位：",
     "<br>Declarer: ": "<br>庄家：",
@@ -485,11 +557,9 @@ ENGLISH_TO_CHINESE = {
     "Delete ": "删除 ",
     "?\nChild assets will also be deleted.": "？\n其子资源也会一并删除。",
     "Create or load a scenario before changing settings.": "请先创建或加载场景，再修改设置。",
-    "Complete the scenario setup and stop recording before demonstration.": "请先完成场景设置并停止记录，再开始演示。",
     "Complete the scenario auction and contract before demonstration.": "请先完成场景叫牌和定约设置，再开始演示。",
     "Select a scenario to view its key play signal.": "选择一个场景以查看其关键出牌信息。",
     "No scenario is loaded. Double-click a scenario to display it.": "尚未加载场景。双击一个场景以显示内容。",
-    "Recording target sequence. Play legal cards in turn order.": "正在记录目标序列。请按出牌顺序打出合法牌。",
     "Passed out — no card-play demonstration.": "不叫定约——没有出牌演示。",
     "Play complete.": "牌局已结束。",
     "Next move is available only for target-rule demonstrations.": "“下一步”仅适用于目标规则演示。",
@@ -497,7 +567,6 @@ ENGLISH_TO_CHINESE = {
     "Target card ": "目标牌 ",
     " is not legal for ": " 对 ",
     " could not be played.": " 无法打出。",
-    "Target recording requires Analysis view, Normal mode, Rule: Target, and a completed auction.": "记录目标需要分析视图、普通模式、目标规则以及完整叫牌过程。",
     "Current view: ": "当前视角：",
     "Robot could not choose a legal move for ": "机器人无法为 ",
     ". Check scenario labels.": "。请检查场景标签。",
@@ -589,9 +658,35 @@ LEGACY_CHINESE_TO_ENGLISH = {
 }
 
 
-def translate_text(text: Any, language: str) -> Any:
-    if not isinstance(text, str) or "DDS" in text:
-        return text
+def _compile_translation_pattern(replacements):
+    branches = []
+    replacement_by_group = {}
+    for index, (source, target) in enumerate(
+        sorted(replacements.items(), key=lambda pair: -len(pair[0]))
+    ):
+        if not source:
+            continue
+        pattern = re.escape(source)
+        if source[0].isascii() and source[0].isalnum():
+            pattern = rf"(?<![A-Za-z0-9]){pattern}"
+        if source[-1].isascii() and source[-1].isalnum():
+            pattern = rf"{pattern}(?![A-Za-z0-9])"
+        group_name = f"translation_{index}"
+        branches.append(f"(?P<{group_name}>{pattern})")
+        replacement_by_group[group_name] = target
+    return re.compile("|".join(branches)), replacement_by_group
+
+
+_ZH_TRANSLATION_PATTERN, _ZH_REPLACEMENTS = _compile_translation_pattern(
+    ENGLISH_TO_CHINESE
+)
+_EN_TRANSLATION_PATTERN, _EN_REPLACEMENTS = _compile_translation_pattern(
+    {**CHINESE_TO_ENGLISH, **LEGACY_CHINESE_TO_ENGLISH}
+)
+
+
+@lru_cache(maxsize=4096)
+def _translate_string(text: str, language: str) -> str:
     if language == "zh" and text in ENGLISH_TO_CHINESE:
         return ENGLISH_TO_CHINESE[text]
     if language == "en":
@@ -600,22 +695,21 @@ def translate_text(text: Any, language: str) -> Any:
         if text in LEGACY_CHINESE_TO_ENGLISH:
             return LEGACY_CHINESE_TO_ENGLISH[text]
 
-    translated = text
-    replacements = (
-        ENGLISH_TO_CHINESE
+    pattern, replacement_by_group = (
+        (_ZH_TRANSLATION_PATTERN, _ZH_REPLACEMENTS)
         if language == "zh"
-        else {**CHINESE_TO_ENGLISH, **LEGACY_CHINESE_TO_ENGLISH}
+        else (_EN_TRANSLATION_PATTERN, _EN_REPLACEMENTS)
     )
-    for source, target in sorted(replacements.items(), key=lambda pair: -len(pair[0])):
-        if not source:
-            continue
-        pattern = re.escape(source)
-        if source[0].isascii() and source[0].isalnum():
-            pattern = rf"(?<![A-Za-z0-9]){pattern}"
-        if source[-1].isascii() and source[-1].isalnum():
-            pattern = rf"{pattern}(?![A-Za-z0-9])"
-        translated = re.sub(pattern, lambda _match: target, translated)
-    return translated
+    return pattern.sub(
+        lambda match: replacement_by_group[match.lastgroup],
+        text,
+    )
+
+
+def translate_text(text: Any, language: str) -> Any:
+    if not isinstance(text, str) or "DDS" in text:
+        return text
+    return _translate_string(text, language)
 
 
 def show_message(parent, kind: str, title: str, text: str, *args):
@@ -656,7 +750,6 @@ class BilingualTextController:
         return (
             obj.property("bilingualExempt") is True
             or object_name.startswith("dds_")
-            or object_name in {"btn_dds_display", "btn_toggle_dds_matrix"}
         )
 
     def _wrap_method(

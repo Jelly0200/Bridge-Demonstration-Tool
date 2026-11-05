@@ -1,7 +1,7 @@
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtGui import QBrush, QColor, QFont
 from PyQt6.QtWidgets import (
     QHeaderView,
     QLineEdit,
@@ -62,6 +62,7 @@ class TreeView(QTreeWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("assetTree")
         self.setHeaderLabel("Asset tree (Folder / Case / Board / Scenario)")
         self.setMinimumWidth(320)
         self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -102,23 +103,20 @@ class TreeView(QTreeWidget):
 
     def reset_zoom(self):
         self._tree_zoom_font_size_px = None
-        self.setStyleSheet("")
+        self.setFont(QFont())
 
     def _change_zoom(self, change: int):
         font = self.font()
-        current_size = self._tree_zoom_font_size_px
-        if current_size is None:
-            current_size = font.pixelSize()
-            if current_size <= 0:
-                point_size = font.pointSizeF()
-                current_size = round(point_size * 96 / 72) if point_size > 0 else 15
+        current_size = font.pixelSize()
+        if current_size <= 0:
+            point_size = font.pointSizeF()
+            current_size = round(point_size * 96 / 72) if point_size > 0 else 15
         self._tree_zoom_font_size_px = max(
             10,
             min(28, current_size + change),
         )
-        self.setStyleSheet(
-            f"QTreeWidget {{ font-size: {self._tree_zoom_font_size_px}px; }}"
-        )
+        font.setPixelSize(self._tree_zoom_font_size_px)
+        self.setFont(font)
 
     def load_tree_data(self, admin_id: Optional[int]):
         self.clear()

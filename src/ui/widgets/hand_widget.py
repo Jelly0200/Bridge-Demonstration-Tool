@@ -5,6 +5,8 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QLabel,
     QFrame,
+    QSizePolicy,
+    QSpacerItem,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QFontMetrics
@@ -34,13 +36,17 @@ class CardWidget(QFrame):
         parent=None,
         compact: bool = False,
         large: bool = False,
+        card_width: int | None = None,
+        suit_symbol_size: int | None = None,
     ):
         super().__init__(parent)
         self.card_code = card_code
         self.suit = card_code[0] if card_code else 'S'
         self.rank = card_code[1:] if len(card_code) > 1 else card_code
         self.compact = compact
-        self.large = large
+        self.card_width = card_width or (24 if compact else 50 if large else 44)
+        self.large = self.card_width > 44
+        self.suit_symbol_size = suit_symbol_size
 
         self.label_color = 'NONE'
         self.label_sequence = None
@@ -50,20 +56,24 @@ class CardWidget(QFrame):
         self.init_ui()
 
     def init_ui(self):
-        if self.large:
-            self.setFixedSize(52, 72)
-        elif self.compact:
+        if self.compact:
             self.setFixedSize(24, 34)
         else:
-            self.setFixedSize(44, 62)
+            self.setFixedSize(
+                self.card_width,
+                62 + round((self.card_width - 44) * 1.25),
+            )
         self.setFrameShape(QFrame.Shape.StyledPanel)
 
         symbol = self.SUIT_SYMBOLS.get(self.suit, '')
         text_color = self.SUIT_COLORS.get(self.suit, '#000000')
-        rank_font_size = 7 if self.compact else 16 if self.large else 14
-        suit_font_size = 12 if self.compact else 32 if self.large else 30
-        sequence_font_size = 7 if self.compact else 10 if self.large else 10
-        dds_font_size = 6 if self.compact else 7
+        size_offset = self.card_width - 44
+        rank_font_size = (
+            7 if self.compact else 14 + round(size_offset * 0.25)
+        )
+        suit_font_size = self._suit_font_size()
+        sequence_font_size = 7 if self.compact else 10
+        dds_font_size = 7 if self.compact else 9
         rank_height = 8 if self.compact else 18 if self.large else 16
         dds_height = 7 if self.compact else 9
         dds_width = 16 if self.compact else 22
@@ -153,6 +163,25 @@ class CardWidget(QFrame):
         layout.setRowStretch(1, 1)
 
         self.update_style()
+
+    def _suit_font_size(self) -> int:
+        if self.suit_symbol_size is None:
+            return 12 if self.compact else 30 + round(
+                (self.card_width - 44) * 0.25
+            )
+        if self.compact:
+            return round(self.suit_symbol_size * 0.4)
+        return self.suit_symbol_size + round(
+            (self.card_width - 44) * 0.25
+        )
+
+    def set_suit_symbol_size(self, size: int):
+        if type(size) is not int or not 10 <= size <= 35:
+            raise ValueError(f"Unsupported suit symbol size: {size}")
+        self.suit_symbol_size = size
+        self.card_label.setFont(
+            QFont("Arial", self._suit_font_size(), QFont.Weight.Bold)
+        )
 
     def set_card_code(self, card_code: str):
         self.card_code = card_code
@@ -281,11 +310,20 @@ class HandWidget(QWidget):
     card_selected = pyqtSignal(str)
     card_context_requested = pyqtSignal(str, str)
 
-    def __init__(self, position: str = "SOUTH", parent=None):
+    def __init__(
+        self,
+        position: str = "SOUTH",
+        parent=None,
+        card_size_large: bool = True,
+        suit_symbol_size: int = 30,
+    ):
         super().__init__(parent)
         self.position = position
         self.cards = []
         self.horizontal = position in ["NORTH", "SOUTH"]
+        self.card_width = 50 if card_size_large else 44
+        self.card_size_large = card_size_large
+        self.suit_symbol_size = suit_symbol_size
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(1, 1, 1, 1)
         self.main_layout.setSpacing(2)
@@ -296,6 +334,26 @@ class HandWidget(QWidget):
         card_codes = [card.card_code for card in self.cards]
         self.horizontal = horizontal
         self.set_hand(card_codes, force_rebuild=True)
+
+    def set_card_size(self, size: int | bool):
+        card_width = (
+            50 if size else 44
+        ) if isinstance(size, bool) else size
+        if self.card_width == card_width:
+            return
+        card_codes = [card.card_code for card in self.cards]
+        self.card_width = card_width
+        self.card_size_large = card_width > 44
+        self.set_hand(card_codes, force_rebuild=True)
+
+    def set_suit_symbol_size(self, size: int):
+        if type(size) is not int or not 10 <= size <= 35:
+            raise ValueError(f"Unsupported suit symbol size: {size}")
+        if self.suit_symbol_size == size:
+            return
+        self.suit_symbol_size = size
+        for card in self.cards:
+            card.set_suit_symbol_size(size)
 
     def set_hand(self, card_codes: list[str], force_rebuild: bool = False):
         if (
@@ -320,22 +378,22 @@ class HandWidget(QWidget):
             cards_by_suit = {suit: [] for suit in "SHDC"}
             for code in card_codes:
                 cards_by_suit.setdefault(code[0], []).append(code)
-            suit_symbols = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
             for suit in "SHDC":
                 row = QHBoxLayout()
                 row.setContentsMargins(0, 0, 0, 0)
                 row.setSpacing(1)
-                suit_label = QLabel(suit_symbols[suit])
-                suit_label.setFixedWidth(16)
-                suit_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                suit_color = "#fca5a5" if suit in {"H", "D"} else "#e2e8f0"
-                suit_label.setStyleSheet(
-                    f"color: {suit_color}; font-weight: bold;"
-                )
-                row.addWidget(suit_label)
+                card_height = 62 + round((self.card_width - 44) * 1.25)
                 for code in cards_by_suit[suit]:
                     row.addWidget(self._reuse_or_make_card(code, existing_cards))
                 row.addStretch(1)
+                row.addItem(
+                    QSpacerItem(
+                        0,
+                        card_height,
+                        QSizePolicy.Policy.Minimum,
+                        QSizePolicy.Policy.Fixed,
+                    )
+                )
                 self.main_layout.addLayout(row)
 
         for card_widget in existing_cards.values():
@@ -347,14 +405,22 @@ class HandWidget(QWidget):
         existing_cards: dict[str, CardWidget],
     ) -> CardWidget:
         card_widget = existing_cards.pop(code, None)
-        if card_widget is None:
+        if card_widget is None or card_widget.card_width != self.card_width:
+            if card_widget is not None:
+                card_widget.deleteLater()
             return self._make_card(code, compact=False)
         card_widget.show()
         self.cards.append(card_widget)
         return card_widget
 
     def _make_card(self, code: str, compact: bool) -> CardWidget:
-        card_widget = CardWidget(code, self, compact=compact)
+        card_widget = CardWidget(
+            code,
+            self,
+            compact=compact,
+            card_width=self.card_width,
+            suit_symbol_size=self.suit_symbol_size,
+        )
         card_widget.card_clicked.connect(self.card_selected.emit)
         card_widget.card_context_requested.connect(
             lambda card, position=self.position: self.card_context_requested.emit(

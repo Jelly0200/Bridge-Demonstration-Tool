@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 
 from src.database.db_manager import DatabaseManager
 from src.database.repository import Repository
@@ -19,6 +20,99 @@ class TestDatabase(unittest.TestCase):
     def tearDown(self):
         self.connection.close()
         DatabaseManager._instance = None
+
+    def test_administrator_preferences_have_defaults_and_round_trip(self):
+        repository = Repository()
+        admin_id = repository.create_admin("preference_admin", "secure password")
+
+        defaults = repository.get_admin_preferences(admin_id)
+
+        self.assertEqual(defaults["card_size_px"], 50)
+        self.assertEqual(defaults["card_suit_symbol_size_px"], 30)
+        self.assertEqual(defaults["font_size_px"], 15)
+        self.assertEqual(defaults["font_color"], "#e2e8f0")
+        self.assertEqual(defaults["background_color"], "#0b1120")
+        self.assertEqual(
+            defaults["panel_styles"],
+            {
+                "asset_tree_width_px": 380,
+                "upper_panel_height_px": 44,
+                "central_panel_height_px": 600,
+                "asset_tree_color": "#111827",
+                "upper_panel_color": "#111827",
+                "central_panel_color": "#0b1120",
+            },
+        )
+        self.assertEqual(defaults["robot_delay_ms"], 1200)
+        self.assertEqual(defaults["sound_volume_percent"], 35)
+        self.assertEqual(defaults["view_mode"], "ANALYSIS")
+
+        updated = {
+            **defaults,
+            "card_size_px": 42,
+            "card_suit_symbol_size_px": 35,
+            "font_size_px": 18,
+            "font_color": "#aabbcc",
+            "background_color": "#102030",
+            "panel_styles": {
+                **defaults["panel_styles"],
+                "asset_tree_width_px": 420,
+                "central_panel_color": "#123456",
+            },
+            "robot_delay_ms": 1800,
+            "sound_choice": "CLASSIC",
+            "sound_volume_percent": 72,
+            "dds_matrix_hidden": True,
+            "dds_display_mode": "CONTRACT_OFFSET",
+            "view_mode": "HIDDEN",
+            "perspective": "WEST",
+            "human_seat": "NORTH",
+            "label_jobs": {"RED": ["opening"]},
+        }
+        repository.save_admin_preferences(admin_id, updated)
+
+        self.assertEqual(repository.get_admin_preferences(admin_id), updated)
+
+    def test_existing_preference_database_migrates_suit_size_range(self):
+        legacy_path = os.path.join(self.temp_dir.name, "legacy_preferences.db")
+        schema_path = Path(__file__).resolve().parents[1] / "schema.sql"
+        legacy_schema = schema_path.read_text(encoding="utf-8").split(
+            "-- 2. Folder Hierarchy",
+            maxsplit=1,
+        )[0].replace(
+            "CardSuitSymbolSizePx BETWEEN 10 AND 35",
+            "CardSuitSymbolSizePx BETWEEN 20 AND 40",
+        )
+        legacy_connection = sqlite3.connect(legacy_path)
+        legacy_connection.executescript(legacy_schema)
+        legacy_connection.execute(
+            """INSERT INTO Administration (Name, Password)
+               VALUES ('legacy_admin', 'placeholder')"""
+        )
+        legacy_connection.execute(
+            """INSERT INTO AdministratorPreference
+               (AdministrationId, CardSuitSymbolSizePx) VALUES (1, 38)"""
+        )
+        legacy_connection.commit()
+        legacy_connection.close()
+
+        DatabaseManager._instance = None
+        migrated_database = DatabaseManager(legacy_path)
+        migrated_connection = migrated_database.get_connection()
+        try:
+            preference = migrated_connection.execute(
+                """SELECT CardSuitSymbolSizePx
+                   FROM AdministratorPreference WHERE AdministrationId = 1"""
+            ).fetchone()
+            table_sql = migrated_connection.execute(
+                """SELECT sql FROM sqlite_master
+                   WHERE type = 'table' AND name = 'AdministratorPreference'"""
+            ).fetchone()["sql"]
+        finally:
+            migrated_connection.close()
+
+        self.assertEqual(preference["CardSuitSymbolSizePx"], 35)
+        self.assertIn("BETWEEN 10 AND 35", table_sql)
 
     def test_legacy_label_color_check_is_removed_and_labels_are_preserved(self):
         repository = Repository()

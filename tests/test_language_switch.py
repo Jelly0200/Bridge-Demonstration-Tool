@@ -2,11 +2,13 @@ import unittest
 from unittest.mock import patch
 
 from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QLabel,
     QMessageBox,
+    QSlider,
     QTreeWidgetItem,
 )
 
@@ -14,6 +16,7 @@ from src.ui.main_window import MainWindow
 from src.ui.i18n import translate_text
 from src.security.passwords import hash_password
 from src.ui.dialogs.export_selection_dialog import ExportSelectionDialog
+from src.ui.widgets.hand_widget import CardWidget
 
 
 class TestLanguageSwitch(unittest.TestCase):
@@ -33,8 +36,8 @@ class TestLanguageSwitch(unittest.TestCase):
         ):
             window.btn_language.click()
         self.assertEqual(
-            window.action_robot_card_sound.text(),
-            "机器人出牌音效",
+            window.table_view.robot_card_sound_action.text(),
+            "播放出牌音效",
         )
         self.assertEqual(window.language, "zh")
         self.assertEqual(window.btn_language.text(), "English")
@@ -42,13 +45,16 @@ class TestLanguageSwitch(unittest.TestCase):
         self.assertEqual(window.btn_add_asset.text(), "添加")
         self.assertEqual(window.toolbar.windowTitle(), "控制工具栏")
         self.assertEqual(window.btn_language.toolTip(), "切换中英文。")
-        self.assertEqual(
-            window.table_view.btn_dds_display.toolTip(),
-            "切换显示当前方赢墩数或定约所需墩数差。",
-        )
         self.assertEqual(window.tree_view.headerItem().text(0), "资源树（文件夹 / 牌例 / 牌局 / 场景）")
-        self.assertEqual(window.table_view.btn_settings.text(), "设置")
-        self.assertEqual(window.table_view.btn_dds_display.text(), "DDS: Tricks")
+        self.assertEqual(window.table_view.btn_bidding.text(), "叫牌")
+        self.assertEqual(
+            window.font_color_action.text(),
+            "应用字体颜色...",
+        )
+        self.assertEqual(
+            window.table_view.dds_visibility_action.text(),
+            "Show DDS matrix",
+        )
 
         window.statusBar().showMessage("Test construction selected")
         self.assertEqual(window.statusBar().currentMessage(), "已选择练习构建模式")
@@ -62,7 +68,7 @@ class TestLanguageSwitch(unittest.TestCase):
         self.assertEqual(window.language, "en")
         self.assertEqual(window.btn_language.text(), "中文")
         self.assertEqual(window.btn_test_mode.text(), "Test construction")
-        self.assertEqual(window.table_view.btn_settings.text(), "Settings")
+        self.assertEqual(window.table_view.btn_bidding.text(), "Bidding")
 
     def test_cascade_menus_are_installed_and_translated(self):
         window = MainWindow()
@@ -75,7 +81,156 @@ class TestLanguageSwitch(unittest.TestCase):
         self.assertTrue(window.toolbar.isHidden())
         self.assertEqual(
             [action.text() for action in window.menuBar().actions()],
-            ["Administrator", "Tool", "Test", "Explorer"],
+            ["Administrator", "Preference", "Tool", "Test", "Explorer"],
+        )
+        self.assertEqual(
+            [action.text() for action in window.preference_menu.actions()],
+            ["DDS", "Styles", "Robot", "Sound", "View"],
+        )
+        preference_submenus = {
+            action.text(): action.menu()
+            for action in window.preference_menu.actions()
+        }
+        explorer_submenus = {
+            action.text(): action.menu()
+            for action in window.explorer_menu.actions()
+            if action.menu() is not None
+        }
+        self.assertEqual(
+            [action.text() for action in preference_submenus["DDS"].actions()
+             if not action.isSeparator()],
+            ["Show DDS matrix", "Tricks", "Contract tricks"],
+        )
+        self.assertEqual(
+            [
+                action.text()
+                for action in explorer_submenus["Labels"].actions()
+            ],
+            ["Show label definition"],
+        )
+        styles_actions = [
+            action
+            for action in preference_submenus["Styles"].actions()
+            if not action.isSeparator()
+        ]
+        self.assertEqual(len(styles_actions), 11)
+        self.assertIsInstance(styles_actions[0].defaultWidget().findChild(QSlider), QSlider)
+        self.assertEqual(
+            styles_actions[1].defaultWidget().findChild(QSlider),
+            window.table_view.suit_symbol_size_slider,
+        )
+        self.assertEqual(
+            styles_actions[2].defaultWidget().findChild(QSlider),
+            window.table_view.font_size_slider,
+        )
+        self.assertFalse(window.table_view.font_size_slider.hasTracking())
+        self.assertEqual(
+            styles_actions[3].text(),
+            "Application font color...",
+        )
+        self.assertEqual(
+            styles_actions[4].text(),
+            "Application background color...",
+        )
+        self.assertIs(
+            styles_actions[5].defaultWidget().findChild(QSlider),
+            window.asset_tree_width_slider,
+        )
+        self.assertIs(
+            styles_actions[6].defaultWidget().findChild(QSlider),
+            window.upper_panel_height_slider,
+        )
+        self.assertIs(
+            styles_actions[7].defaultWidget().findChild(QSlider),
+            window.central_panel_height_slider,
+        )
+        self.assertEqual(
+            [action.text() for action in styles_actions[8:]],
+            [
+                "Asset tree color...",
+                "Upper panel color...",
+                "Central panel color...",
+            ],
+        )
+        previous_font = QApplication.font()
+        self.addCleanup(QApplication.setFont, previous_font)
+        menu_bar_maximum_height = window.menuBar().maximumHeight()
+        card = CardWidget(
+            "SA",
+            parent=window.table_view.hand_widgets["SOUTH"],
+        )
+        card_font_size = card.rank_label.font().pixelSize()
+        window.table_view.font_size_slider.setValue(19)
+        QApplication.processEvents()
+        window.table_view.set_application_font_color("#123456")
+        window.table_view.set_application_background_color("#123123")
+        self.assertEqual(QApplication.font().pixelSize(), 19)
+        self.assertEqual(window.btn_login.font().pixelSize(), 19)
+        self.assertEqual(window.tree_view.font().pixelSize(), 19)
+        self.assertEqual(window.btn_add_asset.font().pixelSize(), 19)
+        self.assertEqual(window.table_view.btn_bidding.font().pixelSize(), 19)
+        self.assertEqual(window.table_view.center_info.font().pixelSize(), 19)
+        self.assertEqual(window.table_view.dds_result_table.font().pixelSize(), 19)
+        self.assertEqual(card.rank_label.font().pixelSize(), card_font_size)
+        self.assertNotIn("font-size: 19px;", window.styleSheet())
+        self.assertIn("color: #123456;", window.styleSheet())
+        self.assertIn("background-color: #123123;", window.styleSheet())
+        self.assertIn("font-size: 19px;", window.menuBar().styleSheet())
+
+        window.asset_tree_width_slider.setValue(420)
+        window.upper_panel_height_slider.setValue(52)
+        window.central_panel_height_slider.setValue(720)
+        QApplication.processEvents()
+        self.assertEqual(window.panel_styles["asset_tree_width_px"], 420)
+        self.assertEqual(window.panel_styles["upper_panel_height_px"], 52)
+        self.assertEqual(window.panel_styles["central_panel_height_px"], 720)
+        self.assertEqual(window.table_view.top_bar_widget.height(), 52)
+        self.assertEqual(
+            window.menuBar().maximumHeight(),
+            menu_bar_maximum_height,
+        )
+        self.assertGreaterEqual(window.table_view.minimumHeight(), 720)
+        with patch(
+            "src.ui.main_window.QColorDialog.getColor",
+            return_value=QColor("#123456"),
+        ):
+            window._choose_panel_color(
+                "central_panel_color",
+                "Central panel color...",
+            )
+        self.assertIn("background-color: #123456;", window.styleSheet())
+        view_actions = [
+            action
+            for action in preference_submenus["View"].actions()
+            if not action.isSeparator()
+        ]
+        self.assertEqual(view_actions[-1].text(), "Rotate view")
+        robot_actions = [
+            action
+            for action in preference_submenus["Robot"].actions()
+            if not action.isSeparator()
+        ]
+        self.assertEqual(
+            [action.text() for action in robot_actions[:2]],
+            ["Follow recorded sequence", "Follow labels"],
+        )
+        self.assertIs(
+            robot_actions[2].defaultWidget().findChild(QSlider),
+            window.table_view.robot_speed_slider,
+        )
+        sound_actions = [
+            action
+            for action in preference_submenus["Sound"].actions()
+            if not action.isSeparator()
+        ]
+        self.assertEqual(
+            [action.text() for action in sound_actions[:1]],
+            ["Play card sound"],
+        )
+        self.assertIs(sound_actions[0], window.table_view.robot_card_sound_action)
+        self.assertIs(
+            sound_actions[-1].defaultWidget().findChild(QSlider),
+            window.table_view.sound_volume_slider,
         )
         with patch(
             "src.ui.main_window.QInputDialog.getItem",
@@ -84,7 +239,11 @@ class TestLanguageSwitch(unittest.TestCase):
             window.btn_language.click()
         self.assertEqual(
             [action.text() for action in window.menuBar().actions()],
-            ["管理员", "工具", "测试", "资源管理器"],
+            ["管理员", "偏好设置", "工具", "测试", "资源管理器"],
+        )
+        self.assertEqual(
+            [action.text() for action in window.preference_menu.actions()],
+            ["DDS", "样式", "机器人", "音效", "视图"],
         )
 
     def test_language_menu_opens_a_choice_dialog_before_switching(self):
@@ -132,21 +291,16 @@ class TestLanguageSwitch(unittest.TestCase):
             [action.text() for action in window.tool_menu.actions()],
             [
                 "Monitor",
-                "Robot card sound",
                 "Instruction",
                 "Language",
                 "Keyboard shortcuts",
             ],
         )
-        self.assertTrue(window.action_robot_card_sound.isCheckable())
-        self.assertTrue(window.action_robot_card_sound.isChecked())
-        with patch.object(
-            window.table_view,
-            "set_robot_card_sound_enabled",
-        ) as set_sound_enabled:
-            window.action_robot_card_sound.trigger()
-        self.assertFalse(window.action_robot_card_sound.isChecked())
-        set_sound_enabled.assert_called_once_with(False)
+        self.assertTrue(window.table_view.robot_card_sound_action.isCheckable())
+        self.assertTrue(window.table_view.robot_card_sound_action.isChecked())
+        window.table_view.robot_card_sound_action.trigger()
+        self.assertFalse(window.table_view.robot_card_sound_action.isChecked())
+        self.assertFalse(window.table_view.robot_card_sound_enabled)
         self.assertEqual(
             [action.text() for action in window.test_menu.actions()],
             [
@@ -158,8 +312,12 @@ class TestLanguageSwitch(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [action.text() for action in window.explorer_menu.actions()],
-            ["README.md", "requirements.txt"],
+            [
+                action.text()
+                for action in window.explorer_menu.actions()
+                if not action.isSeparator()
+            ],
+            ["README.md", "requirements.txt", "Labels"],
         )
         with patch("src.ui.main_window.KeyboardShortcutsDialog") as dialog_class:
             window.show_keyboard_shortcuts()
@@ -328,10 +486,13 @@ class TestLanguageSwitch(unittest.TestCase):
 
         window.set_language("zh")
         self.assertEqual(
-            [action.text() for action in window.explorer_menu.actions()],
-            ["项目说明（README.md）", "依赖清单（requirements.txt）"],
+            [
+                action.text()
+                for action in window.explorer_menu.actions()
+                if not action.isSeparator()
+            ],
+            ["项目说明（README.md）", "依赖清单（requirements.txt）", "标签"],
         )
-        self.assertEqual(len(window.explorer_menu.actions()), 2)
 
         with patch("src.ui.main_window.ProjectDocumentDialog") as document_class:
             window.show_project_document("README.md")
@@ -343,8 +504,12 @@ class TestLanguageSwitch(unittest.TestCase):
 
         window.set_language("en")
         self.assertEqual(
-            [action.text() for action in window.explorer_menu.actions()],
-            ["README.md", "requirements.txt"],
+            [
+                action.text()
+                for action in window.explorer_menu.actions()
+                if not action.isSeparator()
+            ],
+            ["README.md", "requirements.txt", "Labels"],
         )
 
     def test_translation_replacement_does_not_corrupt_english_compounds(self):

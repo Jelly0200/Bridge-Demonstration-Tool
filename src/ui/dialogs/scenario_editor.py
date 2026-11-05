@@ -60,12 +60,6 @@ class ScenarioEditorDialog(QDialog):
             self.declarer_combo.setCurrentText(self.scenario.declarer)
         form.addRow("Declarer:", self.declarer_combo)
 
-        self.risk_combo = QComboBox()
-        self.risk_combo.addItems(["NONE", "DOUBLE", "REDOUBLE"])
-        if self.scenario:
-            self.risk_combo.setCurrentText(self.scenario.risk_status)
-        form.addRow("Risk status:", self.risk_combo)
-
         self.targeted_checkbox = QCheckBox("Enable target-sequence playback")
         self.targeted_checkbox.setChecked(
             bool(self.scenario and self.scenario.is_targeted)
@@ -131,7 +125,7 @@ class ScenarioEditorDialog(QDialog):
         bidding_route = self.bidding_route_input.text().strip()
         contract = self.contract_input.text().strip().upper()
         declarer = self.declarer_combo.currentText()
-        risk_status = self.risk_combo.currentText()
+        risk_status = BridgeLogic.derive_risk_status(bidding_route.split())
         is_targeted = int(self.targeted_checkbox.isChecked())
 
         if contract and contract != "PASSED_OUT":

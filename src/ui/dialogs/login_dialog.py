@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from src.database.repository import Repository
 from src.ui.i18n import show_message
 
@@ -58,6 +58,21 @@ class LoginDialog(QDialog):
         btn_layout.addWidget(self.btn_cancel)
 
         layout.addLayout(btn_layout)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        self._focus_username()
+        QTimer.singleShot(100, self._focus_username)
+
+    def _focus_username(self):
+        if not self.isVisible():
+            return
+        self.username_input.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+        self.username_input.setCursorPosition(
+            len(self.username_input.text())
+        )
 
     def handle_login(self):
         name = self.username_input.text().strip()

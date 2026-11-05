@@ -27,6 +27,21 @@ class TestRuleEditorDialog(unittest.TestCase):
         self.assertEqual(dialog.saved_targeted_sequence, "[]")
         self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
 
+    def test_risk_status_is_derived_and_not_editable_in_rule_settings(self):
+        scenario = Scenario(
+            id=1,
+            board_id=1,
+            bidding_route="1S DBL PASS RDBL PASS PASS",
+            risk_status="NONE",
+        )
+        dialog = RuleEditorDialog(scenario, labels=[])
+        self.addCleanup(dialog.close)
+
+        self.assertFalse(hasattr(dialog, "risk_combo"))
+        self.assertEqual(dialog.saved_risk_status, "REDOUBLE")
+        dialog.save_rules()
+        self.assertEqual(dialog.saved_risk_status, "REDOUBLE")
+
     def test_orange_and_purple_are_valid_label_colors_with_distinct_styles(self):
         dialog = RuleEditorDialog(Scenario(id=1, board_id=1), labels=[])
         self.addCleanup(dialog.close)

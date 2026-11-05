@@ -409,6 +409,23 @@ class TestLabelEvaluator(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.choose(["SA"], {}, [], "unknown")
 
+    def test_color_job_override_can_be_edited_for_a_play_phase(self):
+        labels = [{"Sequence": 1, "Color": "RED", "Card": "SA"}]
+        jobs = {
+            "leading": {"RED": "OFF"},
+        }
+
+        self.assertEqual(
+            LabelEvaluator.evaluate_card_choice(
+                ["SA", "SK"],
+                {"SA": 9, "SK": 9},
+                labels,
+                "leading",
+                color_jobs=jobs,
+            ),
+            "SK",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

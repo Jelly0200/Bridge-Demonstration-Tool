@@ -446,7 +446,7 @@ class TestConstructionView(QWidget):
         self.close_button.setFixedSize(32, 32)
         self.close_button.setStyleSheet(
             "QToolButton { color: white; background-color: #c0392b; "
-            "font-size: 22px; font-weight: bold; border: none; border-radius: 16px; }"
+            "font-weight: bold; border: none; border-radius: 16px; }"
             "QToolButton:hover { background-color: #e74c3c; }"
         )
         self.close_button.clicked.connect(self.close_requested.emit)

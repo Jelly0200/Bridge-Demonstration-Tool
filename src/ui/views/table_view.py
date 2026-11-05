@@ -12,6 +12,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
+from PyQt6.QtGui import QAction, QActionGroup, QColor, QFont, QResizeEvent
 from PyQt6.QtMultimedia import QSoundEffect
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -19,11 +20,15 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
+    QSlider,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QFrame,
 )
 
 from src.core.bridge_game import BridgeGameEngine
@@ -31,9 +36,11 @@ from src.core.bridge_logic import BridgeLogic
 from src.core.pbn_parser import PbnParser
 from src.core.dds_wrapper import DdsWrapper
 from src.robot.robot_agent import RobotAgent
+from src.robot.label_evaluator import DEFAULT_COLOR_JOBS, LabelEvaluator
 from src.ui.widgets.bidding_box import BiddingBoxDialog
 from src.ui.widgets.hand_widget import CardWidget, HandWidget
 from src.ui.dialogs.label_color_dialog import LabelColorDialog
+from src.ui.dialogs.label_jobs_dialog import LabelDefinitionDialog
 from src.ui.dialogs.test_scenario_dialog import TestScenarioDialog
 from src.ui.i18n import (
     BilingualTextController,
@@ -47,8 +54,13 @@ from config.constants import RANKS, SUITS
 class TableView(QWidget):
     """Interactive bridge table for saved boards and scenarios."""
 
+    CARD_AREA_VERTICAL_CLEARANCE = 190
+
     mode_changed = pyqtSignal(str)
     scenario_completed = pyqtSignal()
+    scenario_changed = pyqtSignal()
+    preferences_changed = pyqtSignal()
+    font_style_changed = pyqtSignal()
 
     SEATS_CLOCKWISE = ["NORTH", "EAST", "SOUTH", "WEST"]
     SEAT_LABELS = {
@@ -77,6 +89,10 @@ class TableView(QWidget):
     DDS_MATRIX_SEATS = ("NORTH", "SOUTH", "WEST", "EAST")
     ROBOT_MOVE_DELAY_MS = 1200
     ROBOT_CARD_ANIMATION_MS = 320
+    TEST_CARD_SIZE_PX = 43
+    TEST_ROBOT_MOVE_DELAY_MS = 1200
+    TEST_SOUND_VOLUME_PERCENT = 50
+    RECORD_BUTTON_DDS_GAP = 12
 
     def __init__(
         self,
@@ -84,13 +100,16 @@ class TableView(QWidget):
         language_controller: Optional[BilingualTextController] = None,
     ):
         super().__init__(parent)
+        self.setObjectName("centralTablePanel")
         self.language_controller = (
             language_controller or BilingualTextController()
         )
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.perspective = "SOUTH"
         self.current_side = "SOUTH"
         self.current_mode = "NORMAL"
         self.view_mode = "ANALYSIS"
+        self.preferred_view_mode = "ANALYSIS"
         self.board = None
         self.configuration = None
         self.scenario = None
@@ -102,15 +121,23 @@ class TableView(QWidget):
         self.move_history: list[tuple[BridgeGameEngine, int, int]] = []
         self.bidding_route: list[str] = []
         self.rule_mode = "LABEL"
-        self.recording_target = False
+        self.label_jobs = copy.deepcopy(DEFAULT_COLOR_JOBS)
         self.robot_error_message: Optional[str] = None
         self.demonstration_result_shown = False
         self.dds_display_mode = "TRICKS"
         self.dds_matrix_hidden = False
+        self.robot_move_delay_ms = self.ROBOT_MOVE_DELAY_MS
+        self.card_size = 50
+        self.suit_symbol_size = 30
+        self.application_font_size = 15
+        self.application_font_color = "#e2e8f0"
+        self.application_background_color = "#0b1120"
+        self.central_panel_height_px = 600
         self.dds_trick_table: Optional[list[list[int]]] = None
         self.dds_card_scores: dict[str, int] = {}
         self.lockdown_mode = False
         self.test_playback_active = False
+        self._test_playback_appearance_active = False
         self._completion_emitted = False
         self.dds_wrapper = DdsWrapper()
         self.robot_timer = QTimer(self)
@@ -118,77 +145,206 @@ class TableView(QWidget):
         self.robot_timer.timeout.connect(self._play_next_robot_move)
         self.robot_animation: Optional[QPropertyAnimation] = None
         self.robot_animation_destination: Optional[QWidget] = None
+        self.robot_card_sound_choice = "CLASSIC"
         self.robot_card_sound_enabled = True
+        self.sound_volume_percent = 35
         self.robot_card_sound = QSoundEffect(self)
-        sound_path = (
-            Path(__file__).resolve().parents[3]
-            / "assets"
-            / "sounds"
-            / "robot_card.wav"
+        self.robot_sound_paths = {
+            "CLASSIC": "robot_card.wav",
+        }
+        self._set_robot_card_sound_source("CLASSIC")
+        self._set_sound_volume(self.sound_volume_percent)
+        self.robot_card_sound_action = QAction(
+            "Play card sound",
+            self,
         )
-        self.robot_card_sound.setSource(QUrl.fromLocalFile(str(sound_path)))
-        self.robot_card_sound.setVolume(0.35)
+        self.robot_card_sound_action.setCheckable(True)
+        self.robot_card_sound_action.setChecked(True)
+        self.robot_card_sound_action.toggled.connect(
+            self.set_robot_card_sound_enabled
+        )
+        self.card_size_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.card_size_slider.setRange(35, 50)
+        self.card_size_slider.setSingleStep(1)
+        self.card_size_slider.setPageStep(4)
+        self.card_size_slider.setTickInterval(4)
+        self.card_size_slider.setTickPosition(
+            QSlider.TickPosition.TicksBelow
+        )
+        self.card_size_slider.setTracking(False)
+        self.card_size_slider.setValue(self.card_size)
+        self.card_size_slider.valueChanged.connect(self.set_card_size)
+        self.suit_symbol_size_slider = QSlider(
+            Qt.Orientation.Horizontal,
+            self,
+        )
+        self.suit_symbol_size_slider.setRange(10, 35)
+        self.suit_symbol_size_slider.setSingleStep(1)
+        self.suit_symbol_size_slider.setPageStep(4)
+        self.suit_symbol_size_slider.setTickInterval(4)
+        self.suit_symbol_size_slider.setTickPosition(
+            QSlider.TickPosition.TicksBelow
+        )
+        self.suit_symbol_size_slider.setTracking(False)
+        self.suit_symbol_size_slider.setValue(self.suit_symbol_size)
+        self.suit_symbol_size_slider.valueChanged.connect(
+            self.set_suit_symbol_size
+        )
+        self.font_size_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.font_size_slider.setRange(10, 24)
+        self.font_size_slider.setSingleStep(1)
+        self.font_size_slider.setPageStep(2)
+        self.font_size_slider.setTracking(False)
+        self.font_size_slider.setValue(self.application_font_size)
+        self.font_size_slider.valueChanged.connect(
+            self.set_application_font_size
+        )
+        self.robot_speed_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.robot_speed_slider.setRange(300, 3000)
+        self.robot_speed_slider.setSingleStep(100)
+        self.robot_speed_slider.setPageStep(300)
+        self.robot_speed_slider.setTickInterval(900)
+        self.robot_speed_slider.setTickPosition(
+            QSlider.TickPosition.TicksBelow
+        )
+        self.robot_speed_slider.setInvertedAppearance(True)
+        self.robot_speed_slider.setValue(self.robot_move_delay_ms)
+        self.robot_speed_slider.valueChanged.connect(self.set_robot_speed)
+        self.sound_volume_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.sound_volume_slider.setRange(0, 100)
+        self.sound_volume_slider.setSingleStep(1)
+        self.sound_volume_slider.setPageStep(10)
+        self.sound_volume_slider.setTickInterval(20)
+        self.sound_volume_slider.setTickPosition(
+            QSlider.TickPosition.TicksBelow
+        )
+        self.sound_volume_slider.setValue(self.sound_volume_percent)
+        self.sound_volume_slider.valueChanged.connect(self.set_sound_volume)
         self.init_ui()
         self.language_controller.install(self)
 
+    def _build_bidding_menu(self):
+        self.bidding_action = self.bidding_menu.addAction(
+            "Bidding", self.open_settings
+        )
+        self.description_action = self.bidding_menu.addAction(
+            "Information", self.show_description
+        )
+
+        view_group = QActionGroup(self)
+        view_group.setExclusive(True)
+        self.view_actions = {}
+        for mode, title in (("ANALYSIS", "Analysis"), ("HIDDEN", "Hidden")):
+            action = QAction(title, self)
+            action.setCheckable(True)
+            action.setChecked(mode == self.view_mode)
+            view_group.addAction(action)
+            action.triggered.connect(
+                lambda checked, selected_mode=mode: (
+                    self.set_view_mode(selected_mode)
+                    if checked
+                    else None
+                )
+            )
+            self.view_actions[mode] = action
+
+        dds_group = QActionGroup(self)
+        dds_group.setExclusive(True)
+        self.dds_mode_actions = {}
+        for mode, title in (
+            ("TRICKS", "Tricks"),
+            ("CONTRACT_OFFSET", "Contract tricks"),
+        ):
+            action = QAction(title, self)
+            action.setObjectName(f"dds_mode_{mode.lower()}")
+            action.setCheckable(True)
+            action.setChecked(mode == self.dds_display_mode)
+            dds_group.addAction(action)
+            action.triggered.connect(
+                lambda checked, selected_mode=mode: (
+                    self.set_dds_display_mode(selected_mode)
+                    if checked
+                    else None
+                )
+            )
+            self.dds_mode_actions[mode] = action
+
+        self.dds_visibility_action = QAction("Show DDS matrix", self)
+        self.dds_visibility_action.setObjectName("dds_visibility_action")
+        self.dds_visibility_action.setCheckable(True)
+        self.dds_visibility_action.setChecked(not self.dds_matrix_hidden)
+        self.dds_visibility_action.toggled.connect(
+            self.set_dds_matrix_visible
+        )
+
+        rule_group = QActionGroup(self)
+        rule_group.setExclusive(True)
+        self.rule_actions = {}
+        for mode, title in (
+            ("TARGET", "Follow recorded sequence"),
+            ("LABEL", "Follow labels"),
+        ):
+            action = QAction(title, self)
+            action.setCheckable(True)
+            action.setChecked(mode == self.rule_mode)
+            rule_group.addAction(action)
+            action.triggered.connect(
+                lambda checked, selected_mode=mode: (
+                    self.set_rule_mode(selected_mode)
+                    if checked
+                    else None
+                )
+            )
+            self.rule_actions[mode] = action
+
+        self.label_action = QAction("Show label definition", self)
+        self.label_action.triggered.connect(self.show_label_instructions)
+
+        self.rotate_action = QAction("Rotate view", self)
+        self.rotate_action.triggered.connect(self.rotate_perspective)
+
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 10, 0, 0)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        self.top_bar_layout = QHBoxLayout()
+        self.top_bar_widget = QWidget(self)
+        self.top_bar_widget.setObjectName("upperTablePanel")
+        self.top_bar_layout = QHBoxLayout(self.top_bar_widget)
+        self.top_bar_layout.setContentsMargins(0, 0, 0, 0)
         top_bar_layout = self.top_bar_layout
-        self.btn_settings = QPushButton("Settings")
-        self.btn_settings.clicked.connect(self.open_settings)
-        top_bar_layout.addWidget(self.btn_settings)
+        self.btn_bidding = QPushButton("Bidding")
+        self.bidding_menu = QMenu(self.btn_bidding)
+        self.btn_bidding.setMenu(self.bidding_menu)
+        self._build_bidding_menu()
+        top_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        top_bar_layout.addWidget(self.btn_bidding, alignment=top_alignment)
 
-        self.btn_view_mode = QPushButton("View: Analysis")
-        self.btn_view_mode.clicked.connect(self.toggle_view_mode)
-        top_bar_layout.addWidget(self.btn_view_mode)
-
-        self.btn_dds_display = QPushButton("DDS: Tricks")
-        self.btn_dds_display.setObjectName("btn_dds_display")
-        self.btn_dds_display.setToolTip(
-            "Toggle between side-to-play tricks and contract trick margin."
-        )
-        self.btn_dds_display.clicked.connect(self.toggle_dds_display_mode)
-        top_bar_layout.addWidget(self.btn_dds_display)
-
-        self.btn_mode = QPushButton("Mode: Normal")
-        self.btn_mode.setEnabled(False)
-        top_bar_layout.addWidget(self.btn_mode)
-
-        self.btn_demonstration = QPushButton("Demonstrate")
+        self.btn_demonstration = QPushButton("Start")
         self.btn_demonstration.setStyleSheet(
             "background-color: #2e8b57; color: white; font-weight: bold;"
         )
         self.btn_demonstration.clicked.connect(self.toggle_demonstration)
-        top_bar_layout.addWidget(self.btn_demonstration)
-
-        self.btn_rule_mode = QPushButton("Rule: Label")
-        self.btn_rule_mode.clicked.connect(self.toggle_rule_mode)
-        top_bar_layout.addWidget(self.btn_rule_mode)
-        self.btn_record = QPushButton("Record target")
-        self.btn_record.clicked.connect(self.toggle_target_recording)
-        self.btn_record.setEnabled(False)
-        top_bar_layout.addWidget(self.btn_record)
+        top_bar_layout.addWidget(
+            self.btn_demonstration,
+            alignment=Qt.AlignmentFlag.AlignTop,
+        )
         top_bar_layout.addStretch()
-
-        self.btn_rotate = QPushButton("Rotate view")
-        self.btn_rotate.clicked.connect(self.rotate_perspective)
-        top_bar_layout.addWidget(self.btn_rotate)
-
-        self.btn_side = QPushButton("Human seat: SOUTH")
-        self.btn_side.clicked.connect(self.select_side)
-        top_bar_layout.addWidget(self.btn_side)
-        self.btn_settings.setEnabled(False)
-        self.btn_rule_mode.setEnabled(False)
-        layout.addLayout(top_bar_layout)
+        self.btn_bidding.setEnabled(False)
+        layout.addWidget(self.top_bar_widget)
+        layout.addStretch(1)
 
         self.table_grid = QGridLayout()
+        self.table_canvas = QWidget(self)
+        self.table_canvas.setLayout(self.table_grid)
         self.table_grid.setSpacing(8)
+        self.table_grid.setContentsMargins(0, 0, 0, 0)
         self.hand_widgets = {
-            seat: HandWidget(seat)
+            seat: HandWidget(
+                seat,
+                card_size_large=True,
+                suit_symbol_size=self.suit_symbol_size,
+            )
             for seat in self.SEATS_CLOCKWISE
         }
         for seat, hand in self.hand_widgets.items():
@@ -203,6 +359,7 @@ class TableView(QWidget):
         self.seat_containers = {}
         for label in self.seat_labels.values():
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setFont(QFont(label.font().family(), 16, QFont.Weight.Bold))
         for seat in self.SEATS_CLOCKWISE:
             seat_layout = QVBoxLayout()
             seat_layout.setContentsMargins(2, 2, 2, 2)
@@ -236,54 +393,79 @@ class TableView(QWidget):
             0,
             alignment=Qt.AlignmentFlag.AlignCenter,
         )
+        self.info_overlay = QWidget(self)
+        self.info_overlay.setFixedHeight(72)
+        self.info_overlay.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+            True,
+        )
+        info_overlay_layout = QHBoxLayout(self.info_overlay)
+        info_overlay_layout.setContentsMargins(0, 0, 0, 0)
+        info_overlay_layout.addStretch()
         self.center_info = QLabel(
             "Select a scenario to view its key play signal.",
-            self,
+            self.info_overlay,
         )
         self.center_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.center_info.setMinimumHeight(36)
+        self.center_info.setMinimumHeight(66)
         self.center_info.setWordWrap(True)
+        self.center_info.setMaximumWidth(460)
         self.center_info.setStyleSheet(
-            "background-color: #242831; border: 1px solid #323846; "
-            "border-radius: 8px; padding: 4px; color: #f5f7fa;"
+            "background-color: rgba(15, 23, 42, 238); "
+            "border: 1px solid rgba(56, 189, 248, 170); "
+            "border-radius: 10px; padding: 8px 14px; "
+            "color: #f8fafc; font-weight: 600;"
         )
+        info_overlay_layout.addWidget(
+            self.center_info,
+            alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter,
+        )
+        info_overlay_layout.addStretch()
         self.trick_area.setFixedSize(268, 244)
         self.trick_grid.activate()
         self.played_card_widgets = {}
         self._played_card_widget_pool = {}
-        layout.addWidget(self.center_info)
 
         for row in range(3):
             self.table_grid.setRowStretch(row, 1)
         for column, stretch in enumerate((2, 1, 2)):
             self.table_grid.setColumnStretch(column, stretch)
-        layout.addLayout(self.table_grid, 1)
 
-        footer_layout = QHBoxLayout()
+        self.footer_controls = QWidget(self)
+        footer_layout = QHBoxLayout(self.footer_controls)
         self.footer_layout = footer_layout
         footer_layout.setContentsMargins(0, 0, 0, 0)
+        self.navigation_controls = QFrame(self)
+        self.navigation_controls.setObjectName("moveNavigationControls")
+        self.navigation_controls.setFrameShape(QFrame.Shape.StyledPanel)
+        self.navigation_controls.setStyleSheet(
+            "#moveNavigationControls { background-color: #111827; "
+            "border: 1px solid #475569; border-radius: 6px; } "
+            "#moveNavigationControls QPushButton { color: #f8fafc; "
+            "background-color: #334155; border: 1px solid #64748b; "
+            "border-radius: 4px; padding: 4px 10px; } "
+            "#moveNavigationControls QPushButton:disabled { "
+            "color: #cbd5e1; background-color: #1e293b; "
+            "border-color: #475569; }"
+        )
+        navigation_layout = QHBoxLayout(self.navigation_controls)
+        navigation_layout.setContentsMargins(6, 4, 6, 4)
+        navigation_layout.setSpacing(6)
         self.btn_prev = QPushButton("Last move")
         self.btn_next = QPushButton("Next move")
         self.btn_reset = QPushButton("Reset")
         self.btn_prev.clicked.connect(self.play_previous_move)
         self.btn_next.clicked.connect(self.play_next_move)
         self.btn_reset.clicked.connect(self.reset_moves)
-        footer_layout.addWidget(self.btn_prev)
-        footer_layout.addWidget(self.btn_reset)
-        footer_layout.addWidget(self.btn_next)
+        bottom_alignment = Qt.AlignmentFlag.AlignBottom
+        navigation_layout.addWidget(self.btn_prev)
+        navigation_layout.addWidget(self.btn_reset)
+        navigation_layout.addWidget(self.btn_next)
+        footer_layout.addWidget(
+            self.navigation_controls,
+            alignment=bottom_alignment,
+        )
         footer_layout.addStretch()
-        self.btn_toggle_dds_matrix = QPushButton("Hide DDS")
-        self.btn_toggle_dds_matrix.setObjectName("btn_toggle_dds_matrix")
-        self.btn_toggle_dds_matrix.clicked.connect(
-            self.toggle_dds_matrix_visibility
-        )
-        dds_layout = QVBoxLayout()
-        dds_layout.setContentsMargins(0, 0, 0, 0)
-        dds_layout.setSpacing(2)
-        dds_layout.addWidget(
-            self.btn_toggle_dds_matrix,
-            alignment=Qt.AlignmentFlag.AlignRight,
-        )
         self.dds_result_table = QTableWidget(4, 5)
         self.dds_result_table.setObjectName("dds_result_table")
         self.dds_result_table.setHorizontalHeaderLabels(["S", "H", "D", "C", "NT"])
@@ -320,19 +502,247 @@ class TableView(QWidget):
             "QTableCornerButton::section { background-color: #1e3a8a; "
             "border: 1px solid #334155; }"
         )
-        dds_layout.addWidget(
-            self.dds_result_table,
-            alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
+        self.dds_slot = QStackedWidget(self)
+        self.dds_slot.setFixedSize(310, 180)
+        self.dds_slot.addWidget(self.dds_result_table)
+        self.dds_slot.addWidget(QWidget())
+
+        self.btn_record = QPushButton("Record target", self)
+        self.btn_record.clicked.connect(self.record_completed_play)
+        self.btn_record.setEnabled(False)
+        self.btn_record.hide()
+        self.btn_human_seat = QPushButton("Human seat: SOUTH")
+        self.btn_human_seat.clicked.connect(self.select_side)
+        footer_layout.addWidget(
+            self.btn_human_seat,
+            alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight,
         )
-        footer_layout.addLayout(dds_layout)
-        layout.addLayout(footer_layout)
         self._clear_dds_result_matrix()
 
         self._place_seats()
         self._render_played_cards()
+        self._update_table_canvas_size()
         self._update_dds_visibility()
         self._update_scenario_controls()
+
+    def get_admin_preferences(self) -> dict[str, Any]:
+        return {
+            "card_size_px": self.card_size,
+            "card_suit_symbol_size_px": self.suit_symbol_size,
+            "font_size_px": self.application_font_size,
+            "font_color": self.application_font_color,
+            "background_color": self.application_background_color,
+            "robot_delay_ms": self.robot_move_delay_ms,
+            "sound_choice": self.robot_card_sound_choice,
+            "sound_volume_percent": self.sound_volume_percent,
+            "dds_matrix_hidden": self.dds_matrix_hidden,
+            "dds_display_mode": self.dds_display_mode,
+            "view_mode": self.preferred_view_mode,
+            "perspective": self.perspective,
+            "human_seat": self.current_side,
+            "label_jobs": copy.deepcopy(self.label_jobs),
+        }
+
+    def apply_admin_preferences(self, preferences: dict[str, Any]):
+        self.set_card_size(preferences["card_size_px"])
+        self.set_suit_symbol_size(preferences.get("card_suit_symbol_size_px", 30))
+        self.set_application_font_size(preferences["font_size_px"])
+        self.set_application_font_color(preferences["font_color"])
+        self.set_application_background_color(
+            preferences.get("background_color", "#0b1120")
+        )
+        self.set_robot_speed(preferences["robot_delay_ms"])
+        self.set_robot_card_sound_choice(preferences["sound_choice"])
+        self.set_sound_volume(preferences["sound_volume_percent"])
+        self.dds_matrix_hidden = preferences["dds_matrix_hidden"]
+        self.dds_visibility_action.setChecked(not self.dds_matrix_hidden)
+        self.dds_display_mode = preferences["dds_display_mode"]
+        self.dds_mode_actions[self.dds_display_mode].setChecked(True)
+        self.preferred_view_mode = preferences["view_mode"]
+        self.view_mode = self.preferred_view_mode
+        self.view_actions[self.view_mode].setChecked(True)
+        self.perspective = preferences["perspective"]
+        self.current_side = preferences["human_seat"]
+        self.label_jobs = LabelEvaluator.normalize_color_jobs(
+            preferences["label_jobs"]
+        )
+        if self.robot is not None:
+            self.robot.color_jobs = copy.deepcopy(self.label_jobs)
+        self._place_seats()
+        self._render_hands()
+        self._update_table_canvas_size()
+        self._render_dds_result_matrix()
+        self._update_dds_visibility()
+        self._update_center_info()
         self._update_lockdown_controls()
+
+    def set_application_font_size(self, size: int):
+        if type(size) is not int or not 10 <= size <= 24:
+            raise ValueError(f"Unsupported application font size: {size}")
+        changed = self.application_font_size != size
+        self.application_font_size = size
+        if self.font_size_slider.value() != size:
+            self.font_size_slider.setValue(size)
+        if changed:
+            self.font_style_changed.emit()
+            self.preferences_changed.emit()
+
+    def set_central_panel_height(self, height: int):
+        if type(height) is not int or not 400 <= height <= 1200:
+            raise ValueError(f"Unsupported central panel height: {height}")
+        changed = self.central_panel_height_px != height
+        self.central_panel_height_px = height
+        if changed:
+            self._update_table_canvas_size()
+            self.preferences_changed.emit()
+
+    def set_application_font_color(self, color: str):
+        parsed_color = QColor(color)
+        if not parsed_color.isValid():
+            raise ValueError(f"Unsupported application font color: {color}")
+        normalized_color = parsed_color.name()
+        changed = self.application_font_color != normalized_color
+        self.application_font_color = normalized_color
+        if changed:
+            self.font_style_changed.emit()
+            self.preferences_changed.emit()
+
+    def set_application_background_color(self, color: str):
+        parsed_color = QColor(color)
+        if not parsed_color.isValid():
+            raise ValueError(
+                f"Unsupported application background color: {color}"
+            )
+        normalized_color = parsed_color.name()
+        changed = self.application_background_color != normalized_color
+        self.application_background_color = normalized_color
+        if changed:
+            self.font_style_changed.emit()
+            self.preferences_changed.emit()
+
+    def _update_table_canvas_size(self):
+        for hand in self.hand_widgets.values():
+            hand.main_layout.invalidate()
+            hand.main_layout.activate()
+        for container in self.seat_containers.values():
+            container.layout().invalidate()
+            container.layout().activate()
+        horizontal_seats = [
+            self.seat_containers[seat]
+            for seat in self.SEATS_CLOCKWISE
+            if self.hand_widgets[seat].horizontal
+        ]
+        vertical_seats = [
+            self.seat_containers[seat]
+            for seat in self.SEATS_CLOCKWISE
+            if not self.hand_widgets[seat].horizontal
+        ]
+        horizontal_sizes = [
+            container.sizeHint().expandedTo(container.minimumSizeHint())
+            for container in horizontal_seats
+        ]
+        vertical_sizes = [
+            container.sizeHint().expandedTo(container.minimumSizeHint())
+            for container in vertical_seats
+        ]
+        horizontal_width = max(size.width() for size in horizontal_sizes)
+        side_width = sum(size.width() for size in vertical_sizes)
+        middle_height = max(
+            max(size.height() for size in vertical_sizes),
+            self.trick_area.height(),
+        )
+        spacing = self.table_grid.spacing()
+        canvas_height = (
+            sum(size.height() for size in horizontal_sizes)
+            + middle_height
+            + 2 * spacing
+        )
+        minimum_width = max(
+            self.dds_slot.width(),
+            horizontal_width,
+            side_width + self.trick_area.width() + 2 * spacing,
+        )
+        self.table_canvas.setFixedHeight(canvas_height)
+        minimum_height = max(
+            canvas_height + 2 * self.CARD_AREA_VERTICAL_CLEARANCE,
+            self.central_panel_height_px,
+        )
+        if (
+            self.minimumWidth() != minimum_width
+            or self.minimumHeight() != minimum_height
+        ):
+            self.setMinimumSize(minimum_width, minimum_height)
+        self._position_overlay_widgets()
+        self.table_grid.invalidate()
+        self.table_grid.activate()
+
+    def _position_overlay_widgets(self):
+        canvas_y = (self.height() - self.table_canvas.height()) // 2
+        self.table_canvas.setGeometry(
+            0,
+            canvas_y,
+            self.width(),
+            self.table_canvas.height(),
+        )
+        self.table_canvas.lower()
+        self.info_overlay.setGeometry(0, 0, self.width(), 64)
+        self.dds_slot.move(
+            max(0, self.width() - self.dds_slot.width()),
+            0,
+        )
+        if hasattr(self, "btn_record"):
+            self.btn_record.adjustSize()
+            record_y = (
+                self.dds_result_table.mapTo(
+                    self,
+                    QPoint(0, self.dds_result_table.height()),
+                ).y() + self.RECORD_BUTTON_DDS_GAP
+                if self.dds_slot.currentIndex() == 0
+                else 0
+            )
+            self.btn_record.setGeometry(
+                self.width() - self.btn_record.width(),
+                record_y,
+                self.btn_record.width(),
+                self.btn_record.height(),
+            )
+            self.btn_record.raise_()
+        visible_rect = self.rect()
+        ancestor = self.parentWidget()
+        while ancestor is not None:
+            ancestor_rect = QRect(
+                self.mapFromGlobal(
+                    ancestor.mapToGlobal(ancestor.rect().topLeft())
+                ),
+                ancestor.size(),
+            )
+            visible_rect = visible_rect.intersected(ancestor_rect)
+            if visible_rect.isEmpty():
+                return
+            ancestor = ancestor.parentWidget()
+        footer_height = min(
+            self.footer_controls.sizeHint().height(),
+            visible_rect.height(),
+        )
+        self.footer_controls.setGeometry(
+            visible_rect.left(),
+            visible_rect.bottom() - footer_height + 1,
+            visible_rect.width(),
+            footer_height,
+        )
+        self.info_overlay.raise_()
+        self.dds_slot.raise_()
+        self.btn_bidding.raise_()
+        self.btn_demonstration.raise_()
+        self.navigation_controls.raise_()
+        self.btn_record.raise_()
+        self.btn_human_seat.raise_()
+        self.footer_controls.raise_()
+
+    def resizeEvent(self, event: QResizeEvent | None) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "info_overlay"):
+            self._position_overlay_widgets()
 
     def load_board(
         self,
@@ -368,11 +778,13 @@ class TableView(QWidget):
         bidding_route = [
             self._normalize_auction_call(call) for call in bidding_route
         ]
+        risk_status = BridgeLogic.derive_risk_status(bidding_route)
         target_sequence = []
         robot = None
         contract = ""
         declarer = configuration.dealer
         if scenario:
+            scenario.risk_status = risk_status
             if scenario.targeted_sequence:
                 target_sequence = self._parse_target_sequence(
                     scenario.targeted_sequence
@@ -386,19 +798,23 @@ class TableView(QWidget):
             if auction_complete and contract != "PASSED_OUT":
                 game.start_play(contract, declarer, scenario.risk_status)
                 if not scenario.is_targeted or force_robot:
-                    robot = RobotAgent(game, self.dds_wrapper)
+                    robot = RobotAgent(
+                        game,
+                        self.dds_wrapper,
+                        color_jobs=self.label_jobs,
+                    )
 
         self._stop_robot_playback()
         self.board = board
         self.configuration = configuration
         self.scenario = scenario
         self.test_playback_active = test_playback
+        self._apply_test_playback_appearance()
         self._completion_emitted = False
         self.labels = normalized_labels
         self.current_mode = "NORMAL"
-        self.view_mode = "ANALYSIS"
+        self.view_mode = self.preferred_view_mode
         self.rule_mode = "TARGET" if scenario and scenario.is_targeted else "LABEL"
-        self.recording_target = False
         self.robot_error_message = None
         self.demonstration_result_shown = False
         self.dds_card_scores = {}
@@ -409,15 +825,17 @@ class TableView(QWidget):
         self.robot = robot
         self.bidding_route = bidding_route
 
-        self.btn_view_mode.setText("View: Analysis")
-        self.btn_mode.setText("Mode: Normal")
-        self.btn_rule_mode.setText(f"Rule: {self.rule_mode.title()}")
+        self.view_actions[self.view_mode].setChecked(True)
+        self.rule_actions[self.rule_mode].setChecked(True)
         self._refresh_dds_result(hands)
         self._render_hands()
+        self._update_table_canvas_size()
         self._update_navigation()
         self._update_scenario_controls()
         self._update_center_info()
         self._update_lockdown_controls()
+        if test_playback:
+            self._apply_test_playback_preferences()
 
     def set_lockdown_mode(self, enabled: bool):
         self.lockdown_mode = enabled
@@ -428,27 +846,18 @@ class TableView(QWidget):
             return
         lockdown = self.lockdown_mode
         for button in (
-            self.btn_view_mode,
-            self.btn_dds_display,
-            self.btn_mode,
             self.btn_demonstration,
-            self.btn_rule_mode,
-            self.btn_rotate,
-            self.btn_side,
             self.btn_record,
-            self.btn_reset,
-            self.btn_toggle_dds_matrix,
-            self.dds_result_table,
         ):
             button.setVisible(not lockdown)
-        self.btn_settings.setVisible(True)
+        self.btn_bidding.setVisible(True)
         self.btn_prev.setVisible(True)
         self.btn_next.setVisible(True)
-        self.btn_reset.setVisible(not lockdown)
         if lockdown:
             self.view_mode = "HIDDEN"
-            self.btn_view_mode.setText("View: Hidden")
+            self.view_actions["HIDDEN"].setChecked(True)
             self._apply_view_mode()
+        self._update_scenario_controls()
         self._update_dds_visibility()
 
     def clear_board(self):
@@ -465,21 +874,20 @@ class TableView(QWidget):
         self.target_index = 0
         self.bidding_route = []
         self.test_playback_active = False
+        self._apply_test_playback_appearance()
         self.current_side = "SOUTH"
         self.current_mode = "NORMAL"
         self.view_mode = "ANALYSIS"
         self.rule_mode = "LABEL"
-        self.recording_target = False
         self.robot_error_message = None
         self.demonstration_result_shown = False
         self.dds_trick_table = None
         self.dds_card_scores = {}
-        self.btn_side.setText("Human seat: SOUTH")
-        self.btn_view_mode.setText("View: Analysis")
-        self.btn_mode.setText("Mode: Normal")
-        self.btn_rule_mode.setText("Rule: Label")
+        self.view_actions["ANALYSIS"].setChecked(True)
+        self.rule_actions["LABEL"].setChecked(True)
         self._clear_dds_result_matrix()
         self._render_hands()
+        self._update_table_canvas_size()
         self._update_navigation()
         self._update_scenario_controls()
         self._update_center_info()
@@ -635,18 +1043,39 @@ class TableView(QWidget):
     def toggle_dds_display_mode(self):
         if self.current_mode == "DEMONSTRATION":
             return
-        self.dds_display_mode = (
+        mode = (
             "CONTRACT_OFFSET"
             if self.dds_display_mode == "TRICKS"
             else "TRICKS"
         )
-        self.btn_dds_display.setText(
-            "DDS: Contract ±"
-            if self.dds_display_mode == "CONTRACT_OFFSET"
-            else "DDS: Tricks"
-        )
+        self.set_dds_display_mode(mode)
+
+    def set_dds_display_mode(self, mode: str):
+        if self.current_mode == "DEMONSTRATION":
+            return
+        if mode not in self.dds_mode_actions:
+            raise ValueError(f"Unsupported DDS display mode: {mode}")
+        changed = self.dds_display_mode != mode
+        self.dds_display_mode = mode
+        self.dds_mode_actions[mode].setChecked(True)
         self._render_dds_result_matrix()
         self._apply_card_dds_scores()
+        if changed:
+            self.preferences_changed.emit()
+
+    def set_suit_symbol_size(self, size: int):
+        if type(size) is not int or not 10 <= size <= 35:
+            raise ValueError(f"Unsupported suit symbol size: {size}")
+        changed = self.suit_symbol_size != size
+        self.suit_symbol_size = size
+        if self.suit_symbol_size_slider.value() != size:
+            self.suit_symbol_size_slider.setValue(size)
+        for hand in self.hand_widgets.values():
+            hand.set_suit_symbol_size(size)
+        for card_widget in self.findChildren(CardWidget):
+            card_widget.set_suit_symbol_size(size)
+        if changed:
+            self.preferences_changed.emit()
 
     def _render_hands(self):
         self._stop_robot_animation()
@@ -679,6 +1108,7 @@ class TableView(QWidget):
                 card_label = (
                     None
                     if self.test_playback_active
+                    or self.current_mode == "DEMONSTRATION"
                     else labels_by_card.get(card_widget.card_code)
                 )
                 card_widget.set_label_color(
@@ -847,11 +1277,14 @@ class TableView(QWidget):
                 self.SEATS_CLOCKWISE.index(seat) - perspective_index
             ) % 4
             card_widget = self._played_card_widget_pool.get(seat)
-            if card_widget is None:
+            if card_widget is None or card_widget.card_width != self.card_size:
+                if card_widget is not None:
+                    card_widget.deleteLater()
                 card_widget = CardWidget(
                     card_code,
                     self.played_card_area,
-                    large=True,
+                    card_width=self.card_size,
+                    suit_symbol_size=self.suit_symbol_size,
                 )
                 self._played_card_widget_pool[seat] = card_widget
             else:
@@ -904,18 +1337,20 @@ class TableView(QWidget):
             and self.view_mode == "ANALYSIS"
             and not self.lockdown_mode
         )
-        self.btn_toggle_dds_matrix.setVisible(dds_enabled)
-        self.btn_toggle_dds_matrix.setText(
-            "Show DDS" if self.dds_matrix_hidden else "Hide DDS"
+        self.dds_slot.setCurrentIndex(
+            0 if dds_enabled and not self.dds_matrix_hidden else 1
         )
-        self.dds_result_table.setVisible(
-            dds_enabled and not self.dds_matrix_hidden
-        )
+        self.dds_visibility_action.setChecked(not self.dds_matrix_hidden)
         self._apply_card_dds_scores()
+        if hasattr(self, "footer_controls"):
+            self._position_overlay_widgets()
 
-    def toggle_dds_matrix_visibility(self):
-        self.dds_matrix_hidden = not self.dds_matrix_hidden
+    def set_dds_matrix_visible(self, visible: bool):
+        changed = self.dds_matrix_hidden == visible
+        self.dds_matrix_hidden = not visible
         self._update_dds_visibility()
+        if changed:
+            self.preferences_changed.emit()
 
     def _place_seats(self):
         while self.table_grid.count():
@@ -949,35 +1384,19 @@ class TableView(QWidget):
             self.center_info.setText("Create or load a scenario before changing settings.")
             return
         if self.test_playback_active:
-            language = self.language_controller.language
-            dialog = TestScenarioDialog(
-                "Test scenario",
-                "Scenario information",
-                details=(
-                    (
-                        "Bidding route",
-                        " ".join(self.bidding_route)
-                        or translate_text("No bidding information.", language),
-                    ),
-                ),
-                information=(
-                    self.scenario.information
-                    or translate_text(
-                        "No additional scenario information is available.",
-                        language,
-                    )
-                ),
-                action_text="Close",
-                language=language,
+            dialog = BiddingBoxDialog(
+                self.bidding_route.copy(),
+                dealer=self.configuration.dealer,
                 parent=self,
+                read_only=True,
+                route_only=True,
             )
+            self.language_controller.install(dialog)
             exec_and_delete(dialog)
             return
         dialog = BiddingBoxDialog(
             self.bidding_route.copy(),
             dealer=self.configuration.dealer,
-            risk_status=self.scenario.risk_status,
-            information=self.scenario.information,
             parent=self,
         )
         self.language_controller.install(dialog)
@@ -987,8 +1406,7 @@ class TableView(QWidget):
             saved_side = self.current_side
             self.bidding_route = dialog.bidding_history.copy()
             self.scenario.bidding_route = " ".join(self.bidding_route)
-            self.scenario.risk_status = dialog.risk_combo.currentText()
-            self.scenario.information = dialog.information
+            self.scenario.risk_status = dialog.risk_status
             self.load_board(
                 self.board,
                 self.configuration,
@@ -1017,17 +1435,169 @@ class TableView(QWidget):
         self.perspective = perspectives[(current_index + 1) % len(perspectives)]
         self._place_seats()
         self._render_hands()
-        self.btn_rotate.setToolTip(f"Current view: {self.perspective}")
+        self._update_table_canvas_size()
+        self.preferences_changed.emit()
+
+    def set_card_size(self, size: int | str):
+        sizes = {"STANDARD": 44, "LARGE": 50}
+        card_width = sizes.get(size.upper(), None) if isinstance(size, str) else size
+        if not isinstance(card_width, int) or not 35 <= card_width <= 50:
+            raise ValueError(f"Unsupported card size: {size}")
+        changed = self.card_size != card_width
+        self.card_size = card_width
+        if self.card_size_slider.value() != card_width:
+            self.card_size_slider.setValue(card_width)
+        for hand in self.hand_widgets.values():
+            hand.set_card_size(card_width)
+        self._render_hands()
+        self._update_table_canvas_size()
+        self._update_scenario_controls()
+        if changed:
+            self.preferences_changed.emit()
+
+    def set_robot_speed(self, delay_ms: int):
+        if not 300 <= delay_ms <= 3000:
+            raise ValueError(f"Unsupported robot delay: {delay_ms}")
+        changed = self.robot_move_delay_ms != delay_ms
+        self.robot_move_delay_ms = delay_ms
+        if self.robot_speed_slider.value() != delay_ms:
+            self.robot_speed_slider.setValue(delay_ms)
+        if self.robot_timer.isActive():
+            self.robot_timer.start(delay_ms)
+        if changed:
+            self.preferences_changed.emit()
+
+    def _set_sound_volume(self, volume: int):
+        scaled_volume = volume / 100
+        self.robot_card_sound.setVolume(scaled_volume)
+
+    def set_sound_volume(self, volume: int):
+        if type(volume) is not int or not 0 <= volume <= 100:
+            raise ValueError(f"Unsupported sound volume: {volume}")
+        changed = self.sound_volume_percent != volume
+        self.sound_volume_percent = volume
+        self._set_sound_volume(volume)
+        if self.sound_volume_slider.value() != volume:
+            self.sound_volume_slider.setValue(volume)
+        if changed:
+            self.preferences_changed.emit()
+
+    def _set_robot_card_sound_source(self, choice: str):
+        filename = self.robot_sound_paths.get(choice)
+        if filename is None:
+            raise ValueError(f"Unsupported robot sound: {choice}")
+        sound_path = (
+            Path(__file__).resolve().parents[3]
+            / "assets"
+            / "sounds"
+            / filename
+        )
+        if not sound_path.is_file():
+            raise FileNotFoundError(f"Robot sound file not found: {sound_path}")
+        self.robot_card_sound.stop()
+        self.robot_card_sound.setSource(QUrl.fromLocalFile(str(sound_path)))
+
+    def set_robot_card_sound_choice(self, choice: str):
+        if choice not in {"OFF", *self.robot_sound_paths}:
+            raise ValueError(f"Unsupported robot sound: {choice}")
+        changed = self.robot_card_sound_choice != choice
+        self.robot_card_sound_choice = choice
+        self.robot_card_sound_enabled = choice != "OFF"
+        self.robot_card_sound_action.setChecked(self.robot_card_sound_enabled)
+        if self.robot_card_sound_enabled:
+            self._set_robot_card_sound_source(choice)
+        else:
+            self.robot_card_sound.stop()
+        if changed:
+            self.preferences_changed.emit()
+
+    def _apply_test_playback_preferences(self):
+        self.set_card_size(self.TEST_CARD_SIZE_PX)
+        self.set_robot_speed(self.TEST_ROBOT_MOVE_DELAY_MS)
+        self.set_robot_card_sound_choice("CLASSIC")
+        self.set_sound_volume(self.TEST_SOUND_VOLUME_PERCENT)
+
+    def _apply_test_playback_appearance(self):
+        if self.test_playback_active == self._test_playback_appearance_active:
+            return
+        self._test_playback_appearance_active = self.test_playback_active
+        if self.test_playback_active:
+            center_font = QFont(self.center_info.font())
+            center_font.setPixelSize(20)
+            self.center_info.setFont(center_font)
+            bidding_font = QFont(self.btn_bidding.font())
+            bidding_font.setPixelSize(18)
+            self.btn_bidding.setFont(bidding_font)
+            self.center_info.setMinimumHeight(88)
+            self.center_info.setMaximumWidth(560)
+            self.info_overlay.setFixedHeight(100)
+            self.btn_bidding.setMinimumHeight(48)
+        else:
+            self.center_info.setFont(QFont())
+            self.btn_bidding.setFont(QFont())
+            self.center_info.setMinimumHeight(66)
+            self.center_info.setMaximumWidth(460)
+            self.info_overlay.setFixedHeight(72)
+            self.btn_bidding.setMinimumHeight(0)
+        self._position_overlay_widgets()
+
+    def set_robot_card_sound_enabled(self, enabled: bool):
+        self.set_robot_card_sound_choice(
+            self.robot_card_sound_choice
+            if enabled and self.robot_card_sound_choice != "OFF"
+            else "CLASSIC"
+            if enabled
+            else "OFF"
+        )
 
     def toggle_view_mode(self):
-        self.view_mode = "HIDDEN" if self.view_mode == "ANALYSIS" else "ANALYSIS"
-        self.btn_view_mode.setText(
-            "View: Hidden" if self.view_mode == "HIDDEN" else "View: Analysis"
-        )
+        mode = "HIDDEN" if self.view_mode == "ANALYSIS" else "ANALYSIS"
+        self.set_view_mode(mode)
+
+    def set_view_mode(self, mode: str):
+        if mode not in self.view_actions:
+            raise ValueError(f"Unsupported view mode: {mode}")
+        changed = self.preferred_view_mode != mode
+        self.preferred_view_mode = mode
+        self.view_mode = mode
+        self.view_actions[mode].setChecked(True)
         self._apply_view_mode()
         self._refresh_card_dds_results()
         self._update_dds_visibility()
         self._update_scenario_controls()
+        if changed:
+            self.preferences_changed.emit()
+
+    def show_description(self):
+        if self.scenario is None:
+            return
+        language = self.language_controller.language
+        information = self.scenario.information or translate_text(
+            "No additional scenario information is available.",
+            language,
+        )
+        dialog = TestScenarioDialog(
+            "Scenario description",
+            self.scenario.name or "Scenario information",
+            information=information,
+            action_text="Close",
+            eyebrow="SCENARIO INFORMATION",
+            language=language,
+            parent=self,
+        )
+        self.language_controller.install(dialog)
+        exec_and_delete(dialog)
+
+    def show_label_instructions(self):
+        if self.lockdown_mode:
+            return
+        dialog = LabelDefinitionDialog(
+            self.label_jobs,
+            self.language_controller.language,
+            parent=self,
+        )
+        self.language_controller.install(dialog)
+        exec_and_delete(dialog)
 
     def toggle_mode(self):
         target_mode = (
@@ -1038,61 +1608,58 @@ class TableView(QWidget):
         if self.set_mode(target_mode):
             self.mode_changed.emit(target_mode)
 
-    def toggle_demonstration(self):
-        if self.current_mode == "DEMONSTRATION":
-            if self.set_mode("NORMAL"):
-                self.mode_changed.emit("NORMAL")
-                return True
-            return False
-        return self.start_demonstration()
-
     def toggle_rule_mode(self):
+        if self.scenario is None:
+            return
+        mode = "TARGET" if self.rule_mode == "LABEL" else "LABEL"
+        self.set_rule_mode(mode)
+
+    def set_rule_mode(self, mode: str):
         if self.scenario is None:
             return
         if self.current_mode == "DEMONSTRATION":
             self.set_mode("NORMAL")
             self.mode_changed.emit("NORMAL")
-        self.rule_mode = "TARGET" if self.rule_mode == "LABEL" else "LABEL"
+        self.rule_mode = mode
         self.scenario.is_targeted = int(self.rule_mode == "TARGET")
-        self.btn_rule_mode.setText(f"Rule: {self.rule_mode.title()}")
-        self.recording_target = False
-        self.btn_record.setText("Record target")
+        self.rule_actions[mode].setChecked(True)
         self._reset_play_state()
         self._update_scenario_controls()
 
-    def toggle_target_recording(self):
-        if self.recording_target:
-            self.recording_target = False
-            self.scenario.targeted_sequence = json.dumps(self.target_sequence)
-            self.scenario.is_targeted = 1
-            self.rule_mode = "TARGET"
-            self.btn_rule_mode.setText("Rule: Target")
+    def record_completed_play(self):
+        if (
+            self.scenario is None
+            or self.game is None
+            or self.current_mode != "NORMAL"
+            or self.view_mode != "ANALYSIS"
+            or self.lockdown_mode
+            or self.test_playback_active
+            or not self._auction_is_playable()
+            or not self._is_board_complete()
+        ):
+            return False
+
+        sequence = [
+            card
+            for trick in self.game.completed_tricks
+            for _player, card in trick
+        ]
+        if len(sequence) != 52 or len(set(sequence)) != 52:
             self.center_info.setText(
-                f"Target sequence recorded: {len(self.target_sequence)} cards."
+                "The completed play does not contain 52 unique cards."
             )
-        else:
-            if (
-                self.current_mode != "NORMAL"
-                or self.view_mode != "ANALYSIS"
-                or self.rule_mode != "TARGET"
-                or not self._auction_is_playable()
-            ):
-                self.center_info.setText(
-                    "Target recording requires Analysis view, Normal mode, "
-                    "Rule: Target, and a completed auction."
-                )
-                return
-            self._reset_play_state()
-            self.target_sequence = []
-            self.scenario.targeted_sequence = "[]"
-            self.scenario.is_targeted = 1
-            self.robot = None
-            self.recording_target = True
-            self.center_info.setText(
-                "Recording target sequence. Play legal cards in turn order."
-            )
+            return False
+
+        self.target_sequence = sequence
+        self.scenario.targeted_sequence = json.dumps(sequence)
+        self.scenario.is_targeted = 1
+        self.rule_mode = "TARGET"
+        self.rule_actions["TARGET"].setChecked(True)
+        self.scenario_changed.emit()
+        self.center_info.setText("Target sequence recorded: 52 cards.")
         self._update_navigation()
         self._update_scenario_controls()
+        return True
 
     def on_card_context_requested(self, player: str, card: str):
         if (
@@ -1221,17 +1788,23 @@ class TableView(QWidget):
             game.start_play(contract, declarer, self.scenario.risk_status)
         self.game = game
         self.demonstration_result_shown = False
+        self._completion_emitted = False
         self.target_index = 0
         self.move_history.clear()
         self.robot_error_message = None
         self.robot = (
-            RobotAgent(game, self.dds_wrapper)
+            RobotAgent(
+                game,
+                self.dds_wrapper,
+                color_jobs=self.label_jobs,
+            )
             if self.is_scenario_ready()
             and self.rule_mode == "LABEL"
             and contract != "PASSED_OUT"
             else None
         )
         self._render_hands()
+        self._update_table_canvas_size()
         self._update_navigation()
         self._update_center_info()
 
@@ -1250,13 +1823,25 @@ class TableView(QWidget):
         self.mode_changed.emit("DEMONSTRATION")
         return True
 
+    def toggle_demonstration(self):
+        if self.current_mode == "DEMONSTRATION":
+            return self.end_demonstration()
+        return self.start_demonstration()
+
+    def end_demonstration(self):
+        if self.current_mode != "DEMONSTRATION":
+            return False
+        if not self.set_mode("NORMAL"):
+            return False
+        self.mode_changed.emit("NORMAL")
+        return True
+
     def select_side(self):
         if self.current_mode == "DEMONSTRATION":
             return
         sides = ["SOUTH", "WEST", "NORTH", "EAST"]
         current_index = sides.index(self.current_side)
         self.current_side = sides[(current_index + 1) % len(sides)]
-        self.btn_side.setText(f"Human seat: {self.current_side}")
         if (
             self.current_mode == "DEMONSTRATION"
             and self.scenario
@@ -1266,40 +1851,35 @@ class TableView(QWidget):
             self._render_hands()
         self._apply_view_mode()
         self._update_center_info()
+        self.preferences_changed.emit()
 
     def set_mode(self, mode: str):
+        entering_demonstration = (
+            mode == "DEMONSTRATION"
+            and self.current_mode != "DEMONSTRATION"
+        )
         if mode != "DEMONSTRATION":
             self._stop_robot_playback()
         if mode == "DEMONSTRATION" and (
             not self.is_scenario_ready()
             or self.scenario.contract.upper() == "PASSED_OUT"
-            or self.recording_target
         ):
             self.center_info.setText(
-                "Complete the scenario setup and stop recording before demonstration."
+                "Complete the scenario setup before demonstration."
             )
             self._update_scenario_controls()
             return False
-        if mode == "DEMONSTRATION" and self.current_mode != "DEMONSTRATION":
+        if entering_demonstration:
             self._reset_play_state()
         self.current_mode = mode
         if mode == "DEMONSTRATION":
             self.demonstration_result_shown = False
-        self.btn_mode.setText(
-            "Mode: Demonstration" if mode == "DEMONSTRATION" else "Mode: Normal"
-        )
-        self.btn_mode.setEnabled(False)
-        self.btn_demonstration.setText(
-            "Stop"
-            if mode == "DEMONSTRATION"
-            else "Demonstrate"
-        )
-        if mode == "DEMONSTRATION" and self.scenario and not self.scenario.is_targeted:
+        if entering_demonstration:
             self._advance_robots()
         self._render_hands()
         self._apply_view_mode()
         self._update_dds_visibility()
-        self._update_navigation()
+        self._update_scenario_controls()
         self._update_center_info()
         return True
 
@@ -1310,25 +1890,34 @@ class TableView(QWidget):
         if self.current_mode not in {"NORMAL", "DEMONSTRATION"}:
             self.center_info.setText("Card selection is not available in this mode.")
             return
-        if self.recording_target:
-            if player != self.game.current_player:
-                self.center_info.setText(
-                    f"It is {self.game.current_player or 'no player'}'s turn."
-                )
-                return
-            self._play_card(player, card, record_target=True)
-            self._render_hands()
-            self._update_navigation()
-            self._update_center_info()
-            return
-        if self.rule_mode == "TARGET":
+        if self.current_mode == "NORMAL" and not self._auction_is_playable():
             self.center_info.setText(
-                "Start target recording or switch to demonstration playback."
+                "Complete the auction in Bidding before playing cards."
             )
             return
-        if not self.is_scenario_ready():
+        if (
+            self.current_mode == "DEMONSTRATION"
+            and not self.is_scenario_ready()
+        ):
             self.center_info.setText(
-                "Complete the auction in Settings before playing cards."
+                "Complete the scenario setup before demonstration."
+            )
+            return
+        if (
+            self.current_mode == "DEMONSTRATION"
+            and self.rule_mode == "TARGET"
+            and (
+                self.target_index >= len(self.target_sequence)
+                or card != self.target_sequence[self.target_index]
+            )
+        ):
+            expected = (
+                self.target_sequence[self.target_index]
+                if self.target_index < len(self.target_sequence)
+                else "no card"
+            )
+            self.center_info.setText(
+                f"The recorded sequence requires {expected}."
             )
             return
         human_seats = self._human_controlled_seats()
@@ -1348,6 +1937,11 @@ class TableView(QWidget):
         if not self._play_card(player, card):
             self.center_info.setText(f"{card} is not a legal card for {player}.")
             return
+        if (
+            self.current_mode == "DEMONSTRATION"
+            and self.rule_mode == "TARGET"
+        ):
+            self.target_index += 1
         self._advance_robots()
         self._render_hands()
         self._update_navigation()
@@ -1365,7 +1959,7 @@ class TableView(QWidget):
             return self.PARTNERS[self.current_side]
         return {self.current_side}
 
-    def _play_card(self, player: str, card: str, record_target=False):
+    def _play_card(self, player: str, card: str):
         if not self.game:
             return False
         if card not in self.game.get_legal_cards(player):
@@ -1382,9 +1976,6 @@ class TableView(QWidget):
         if not self.game.play_card(player, card):
             self.move_history.pop()
             return False
-        if record_target:
-            self.target_sequence.append(card)
-            self.scenario.targeted_sequence = json.dumps(self.target_sequence)
         if self._is_board_complete() and not self._completion_emitted:
             self._completion_emitted = True
             QTimer.singleShot(0, self.scenario_completed.emit)
@@ -1395,22 +1986,32 @@ class TableView(QWidget):
             return
         self.robot_error_message = None
         if not self.robot_timer.isActive():
-            self.robot_timer.start(self.ROBOT_MOVE_DELAY_MS)
+            self.robot_timer.start(self.robot_move_delay_ms)
 
     def _robots_should_play(self) -> bool:
+        if (
+            self.current_mode != "DEMONSTRATION"
+            or not self.game
+            or not self.game.current_player
+            or self._is_board_complete()
+        ):
+            return False
+        if self.rule_mode == "TARGET":
+            return bool(
+                self.target_index < len(self.target_sequence)
+                and self.game.current_player
+                not in self._human_controlled_seats()
+            )
         return bool(
-            self.current_mode == "DEMONSTRATION"
-            and self.game
-            and self.robot
-            and not self.recording_target
-            and self.rule_mode == "LABEL"
-            and self.game.current_player
+            self.robot
             and self.game.current_player not in self._human_controlled_seats()
-            and not self._is_board_complete()
         )
 
     def _play_next_robot_move(self):
         if not self._robots_should_play():
+            return
+        if self.rule_mode == "TARGET":
+            self.play_next_target_card(animate=True)
             return
 
         player = self.game.current_player
@@ -1458,10 +2059,7 @@ class TableView(QWidget):
         self._update_center_info()
 
         if self._robots_should_play():
-            self.robot_timer.start(self.ROBOT_MOVE_DELAY_MS)
-
-    def set_robot_card_sound_enabled(self, enabled: bool):
-        self.robot_card_sound_enabled = bool(enabled)
+            self.robot_timer.start(self.robot_move_delay_ms)
 
     def _play_robot_card_sound(self):
         if self.robot_card_sound_enabled:
@@ -1479,7 +2077,12 @@ class TableView(QWidget):
             self,
             destination_widget.rect().center(),
         )
-        overlay = CardWidget(card, self)
+        overlay = CardWidget(
+            card,
+            self,
+            card_width=self.card_size,
+            suit_symbol_size=self.suit_symbol_size,
+        )
         end_rect = QRect(
             destination_position.x() - overlay.width() // 2,
             destination_position.y() - overlay.height() // 2,
@@ -1540,15 +2143,15 @@ class TableView(QWidget):
         self.robot_timer.stop()
         self._stop_robot_animation()
 
-    def play_next_target_card(self):
+    def play_next_target_card(self, animate: bool = False):
         if (
-            self.current_mode != "DEMONSTRATION"
+            self.current_mode not in {"NORMAL", "DEMONSTRATION"}
             or not self.scenario
             or self.rule_mode != "TARGET"
             or not self.game
         ):
             self.center_info.setText(
-                "Next move is available only for target-rule demonstrations."
+                "Next move is available only for a target-rule scenario."
             )
             return
         if self.target_index >= len(self.target_sequence):
@@ -1561,14 +2164,36 @@ class TableView(QWidget):
                 f"Target card {card} is not legal for {player or 'the current position'}."
             )
             return
+        source_rect = None
+        if animate:
+            source_widget = next(
+                (
+                    card_widget
+                    for card_widget in self.hand_widgets[player].cards
+                    if card_widget.card_code == card
+                ),
+                None,
+            )
+            if source_widget is not None:
+                source_rect = QRect(
+                    source_widget.mapTo(self, QPoint(0, 0)),
+                    source_widget.size(),
+                )
 
         if not self._play_card(player, card):
             self.center_info.setText(f"Target card {card} could not be played.")
             return
         self.target_index += 1
         self._render_hands()
+        if animate:
+            self._play_robot_card_sound()
+            destination = self.played_card_widgets.get(player)
+            if source_rect is not None and destination is not None:
+                self._animate_robot_card(card, source_rect, destination)
         self._update_navigation()
         self._update_center_info()
+        if self._robots_should_play() and not self.robot_timer.isActive():
+            self.robot_timer.start(self.robot_move_delay_ms)
         if (
             self.target_index >= len(self.target_sequence)
             and not self._completion_emitted
@@ -1581,73 +2206,110 @@ class TableView(QWidget):
 
     def play_previous_move(self):
         if (
-            self.current_mode != "NORMAL"
-            or self.view_mode != "ANALYSIS"
+            self.current_mode not in {"NORMAL", "DEMONSTRATION"}
             or not self.move_history
         ):
             return
+        self._stop_robot_playback()
         self._restore_previous_move()
+        self._advance_robots()
 
     def reset_moves(self):
         if (
-            self.current_mode != "NORMAL"
-            or self.view_mode != "ANALYSIS"
+            self.current_mode not in {"NORMAL", "DEMONSTRATION"}
         ):
             return
         self._stop_robot_playback()
         while self.move_history:
             self.game, self.target_index, sequence_length = self.move_history.pop()
-            self.target_sequence = self.target_sequence[:sequence_length]
-        if self.scenario:
+            if self.rule_mode == "TARGET":
+                self.target_sequence = self.target_sequence[:sequence_length]
+        if self.scenario and self.rule_mode == "TARGET":
             self.scenario.targeted_sequence = json.dumps(self.target_sequence)
         self.demonstration_result_shown = False
         self.robot_error_message = None
         self._render_hands()
         self._update_navigation()
         self._update_center_info()
+        self._advance_robots()
 
     def _restore_previous_move(self):
         if not self.move_history:
             return
         self.game, self.target_index, sequence_length = self.move_history.pop()
-        self.target_sequence = self.target_sequence[:sequence_length]
-        if self.scenario:
+        if self.rule_mode == "TARGET":
+            self.target_sequence = self.target_sequence[:sequence_length]
+        if self.scenario and self.rule_mode == "TARGET":
             self.scenario.targeted_sequence = json.dumps(self.target_sequence)
         self._render_hands()
         self._update_navigation()
         self._update_center_info()
 
     def play_next_move(self):
-        self.play_next_target_card()
+        if self.rule_mode == "TARGET":
+            self.play_next_target_card()
+        elif (
+            self.test_playback_active
+            and self.current_mode == "DEMONSTRATION"
+            and self._robots_should_play()
+        ):
+            self._stop_robot_playback()
+            self._play_next_robot_move()
 
     def _update_navigation(self):
-        analysis = (
-            self.current_mode == "NORMAL"
-            and self.view_mode == "ANALYSIS"
-        )
-        targeted_demo = bool(
+        can_navigate = self.current_mode == "NORMAL"
+        target_moves_available = bool(
             self.scenario
             and self.rule_mode == "TARGET"
             and self.is_scenario_ready()
             and self.scenario.contract.upper() != "PASSED_OUT"
-            and self.current_mode == "DEMONSTRATION"
+            and self.current_mode in {"NORMAL", "DEMONSTRATION"}
         )
         can_record = bool(
             self.scenario
-            and self.rule_mode == "TARGET"
-            and analysis
             and self.current_mode == "NORMAL"
+            and self.view_mode == "ANALYSIS"
+            and not self.lockdown_mode
+            and not self.test_playback_active
             and self._auction_is_playable()
+            and self._is_board_complete()
         )
-        self.btn_record.setEnabled(self.recording_target or can_record)
-        self.btn_record.setText(
-            "Stop recording" if self.recording_target else "Record target"
+        show_record_button = bool(
+            self.board
+            and self.current_mode == "NORMAL"
+            and self.view_mode == "ANALYSIS"
+            and not self.lockdown_mode
+            and not self.test_playback_active
+        ) or (self.current_mode == "DEMONSTRATION" and not self.lockdown_mode)
+        self.btn_record.setVisible(show_record_button)
+        self.btn_record.setEnabled(can_record)
+        self.btn_record.setToolTip(
+            ""
+            if can_record
+            else (
+                "Load or create a scenario before recording a target."
+                if self.scenario is None
+                else "Play all 52 cards in Analysis before recording a target."
+            )
         )
-        self.btn_prev.setEnabled(analysis and bool(self.move_history))
-        self.btn_reset.setEnabled(analysis and bool(self.move_history))
+        self.btn_prev.setEnabled(can_navigate and bool(self.move_history))
+        self.btn_reset.setEnabled(can_navigate and bool(self.move_history))
         self.btn_next.setEnabled(
-            targeted_demo and self.target_index < len(self.target_sequence)
+            target_moves_available
+            and (
+                can_navigate
+                or (
+                    self.current_mode == "DEMONSTRATION"
+                    and self.rule_mode == "TARGET"
+                )
+            )
+            and self.target_index < len(self.target_sequence)
         )
+        if hasattr(self, "footer_controls"):
+            self.navigation_controls.setVisible(
+                not self.test_playback_active
+            )
+            self._position_overlay_widgets()
 
     def is_scenario_ready(self) -> bool:
         return self._scenario_is_ready(
@@ -1692,28 +2354,66 @@ class TableView(QWidget):
     def _update_scenario_controls(self):
         has_scenario = self.scenario is not None
         is_demonstration = self.current_mode == "DEMONSTRATION"
-        self.btn_settings.setEnabled(has_scenario)
-        self.btn_rule_mode.setEnabled(has_scenario)
-        self.btn_mode.setEnabled(False)
-        self.btn_side.setEnabled(not is_demonstration)
-        self.btn_rotate.setEnabled(not is_demonstration)
-        self.btn_dds_display.setEnabled(not is_demonstration)
-        self.btn_view_mode.setEnabled(True)
-        self.btn_demonstration.setEnabled(
-            bool(
-                is_demonstration
-                or (
-                    self.current_mode != "TEST"
-                    and self.is_scenario_ready()
-                    and self.scenario.contract.upper() != "PASSED_OUT"
-                    and not self.recording_target
-                )
+        self.btn_human_seat.setText(
+            translate_text(
+                f"Human seat: {self.current_side}",
+                self.language_controller.language,
             )
         )
-        self.btn_demonstration.setText(
-            "Stop"
+        self.btn_human_seat.setVisible(not self.test_playback_active)
+        self.btn_human_seat.setEnabled(
+            not is_demonstration and not self.lockdown_mode
+        )
+        self.btn_bidding.setEnabled(
+            has_scenario
+        )
+        can_start = bool(
+            has_scenario
+            and not self.lockdown_mode
+            and self.scenario.contract.upper() != "PASSED_OUT"
+            and self.is_scenario_ready()
+        )
+        self.btn_demonstration.setText("End" if is_demonstration else "Start")
+        self.btn_demonstration.setStyleSheet(
+            "background-color: #9f3a38; color: white; font-weight: bold;"
             if is_demonstration
-            else "Demonstrate"
+            else "background-color: #2e8b57; color: white; font-weight: bold;"
+        )
+        self.btn_demonstration.setEnabled(
+            (is_demonstration or can_start) and not self.lockdown_mode
+        )
+        self.btn_demonstration.setVisible(not self.lockdown_mode)
+        self.dds_visibility_action.setEnabled(
+            self.current_mode == "NORMAL"
+            and self.view_mode == "ANALYSIS"
+            and not self.lockdown_mode
+        )
+        for action in self.rule_actions.values():
+            action.setEnabled(has_scenario and not self.lockdown_mode)
+        self.view_actions["ANALYSIS"].setEnabled(not self.lockdown_mode)
+        self.view_actions["HIDDEN"].setEnabled(not self.lockdown_mode)
+        self.bidding_action.setEnabled(
+            has_scenario
+        )
+        self.description_action.setEnabled(
+            has_scenario
+            and (not self.lockdown_mode or self.test_playback_active)
+            and (not is_demonstration or self.test_playback_active)
+        )
+        self.rotate_action.setEnabled(
+            self.current_mode != "DEMONSTRATION"
+            and not self.lockdown_mode
+        )
+        self.label_action.setEnabled(not self.lockdown_mode)
+        self.card_size_slider.setEnabled(
+            self.current_mode != "DEMONSTRATION" and not self.lockdown_mode
+        )
+        self.robot_speed_slider.setEnabled(not self.lockdown_mode)
+        self.dds_mode_actions["TRICKS"].setEnabled(
+            self.current_mode != "DEMONSTRATION" and not self.lockdown_mode
+        )
+        self.dds_mode_actions["CONTRACT_OFFSET"].setEnabled(
+            self.current_mode != "DEMONSTRATION" and not self.lockdown_mode
         )
         self._update_navigation()
 
@@ -1779,24 +2479,20 @@ class TableView(QWidget):
             )
             self._update_scenario_controls()
             return
-        if self.recording_target:
-            self.center_info.setText(
-                f"Recording target sequence: {len(self.target_sequence)} cards."
-            )
-            self._update_scenario_controls()
-            return
         if self.scenario.contract.upper() == "PASSED_OUT":
             self.center_info.setText("Passed out — no card-play demonstration.")
             self._update_scenario_controls()
             return
         if not self._auction_is_playable():
             self.center_info.setText(
-                "Use Settings to enter a complete, legal auction before card play."
+                "Use Bidding to enter a complete, legal auction before card play."
             )
             self._update_scenario_controls()
             return
         if not self.is_scenario_ready():
-            self.center_info.setText("Record a target sequence before demonstration.")
+            self.center_info.setText(
+                "Play all 52 cards in Analysis and record the target sequence."
+            )
             self._update_scenario_controls()
             return
 
@@ -1814,12 +2510,17 @@ class TableView(QWidget):
         elif self.rule_mode == "TARGET":
             self.center_info.setText(
                 f"Target play: {self.target_index}/{len(self.target_sequence)}"
-                f"<br>Next: {self.game.current_player or '—'}"
+                f"\nNext: {self.game.current_player or '—'}"
             )
         else:
+            risk_status = (self.scenario.risk_status or "").strip().upper()
+            contract_text = self.scenario.contract
+            if risk_status != "NONE":
+                contract_text = f"{contract_text} {risk_status}"
             self.center_info.setText(
-                f"{self.scenario.contract} {self.scenario.risk_status}"
-                f"<br>Declarer: {self.scenario.declarer}"
-                f"<br>To play: {self.game.current_player or '—'}"
+                f"{contract_text}\n"
+                f"Declarer: {self.scenario.declarer.title()}\n"
+                f"To play: "
+                f"{self.game.current_player.title() if self.game.current_player else '—'}"
             )
         self._update_scenario_controls()

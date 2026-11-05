@@ -8,6 +8,37 @@ CREATE TABLE IF NOT EXISTS Administration (
     ExpiresAt TEXT NULL
 );
 
+-- Administrator-specific display, playback, and sound preferences.
+CREATE TABLE IF NOT EXISTS AdministratorPreference (
+    AdministrationId INTEGER PRIMARY KEY,
+    CardSizePx INTEGER NOT NULL DEFAULT 50 CHECK(CardSizePx BETWEEN 35 AND 50),
+    CardSuitSymbolSizePx INTEGER NOT NULL DEFAULT 30
+        CHECK(CardSuitSymbolSizePx BETWEEN 10 AND 35),
+    RobotDelayMs INTEGER NOT NULL DEFAULT 1200 CHECK(RobotDelayMs BETWEEN 300 AND 3000),
+    SoundChoice TEXT NOT NULL DEFAULT 'CLASSIC'
+        CHECK(SoundChoice IN ('OFF', 'CLASSIC')),
+    SoundVolumePercent INTEGER NOT NULL DEFAULT 35
+        CHECK(SoundVolumePercent BETWEEN 0 AND 100),
+    DdsMatrixHidden INTEGER NOT NULL DEFAULT 0
+        CHECK(DdsMatrixHidden IN (0, 1)),
+    DdsDisplayMode TEXT NOT NULL DEFAULT 'TRICKS'
+        CHECK(DdsDisplayMode IN ('TRICKS', 'CONTRACT_OFFSET')),
+    ViewMode TEXT NOT NULL DEFAULT 'ANALYSIS'
+        CHECK(ViewMode IN ('ANALYSIS', 'HIDDEN')),
+    Perspective TEXT NOT NULL DEFAULT 'SOUTH'
+        CHECK(Perspective IN ('SOUTH', 'WEST', 'NORTH', 'EAST')),
+    HumanSeat TEXT NOT NULL DEFAULT 'SOUTH'
+        CHECK(HumanSeat IN ('SOUTH', 'WEST', 'NORTH', 'EAST')),
+    LabelJobs JSON NOT NULL DEFAULT '{}',
+    FontSizePx INTEGER NOT NULL DEFAULT 15 CHECK(FontSizePx BETWEEN 10 AND 24),
+    FontColor TEXT NOT NULL DEFAULT '#e2e8f0',
+    BackgroundColor TEXT NOT NULL DEFAULT '#0b1120',
+    PanelStyles JSON NOT NULL DEFAULT '{}',
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (AdministrationId)
+        REFERENCES Administration(Id) ON DELETE CASCADE
+);
+
 -- 2. Folder Hierarchy (Self-referencing tree)
 CREATE TABLE IF NOT EXISTS Folder (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,

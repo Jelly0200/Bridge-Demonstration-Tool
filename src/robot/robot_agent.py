@@ -1,4 +1,5 @@
 # src/robot/robot_agent.py
+from copy import deepcopy
 from typing import List, Dict, Any, Optional
 from src.core.bridge_game import BridgeGameEngine
 from src.core.dds_wrapper import DdsWrapper
@@ -11,9 +12,15 @@ DDS_TRUMPS = {"S": 0, "H": 1, "D": 2, "C": 3, "NT": 4}
 
 
 class RobotAgent:
-    def __init__(self, game_engine: BridgeGameEngine, dds_wrapper: DdsWrapper):
+    def __init__(
+        self,
+        game_engine: BridgeGameEngine,
+        dds_wrapper: DdsWrapper,
+        color_jobs: Optional[Dict[str, Dict[str, str]]] = None,
+    ):
         self.game = game_engine
         self.dds = dds_wrapper
+        self.color_jobs = LabelEvaluator.normalize_color_jobs(color_jobs)
 
     def select_move(self, player: str, labels: List[Dict[str, Any]], pbn_deal: str) -> Optional[str]:
         """
@@ -77,6 +84,7 @@ class RobotAgent:
             dds_card_scores=dds_card_scores,
             labels=labels,
             play_type=play_type,
+            color_jobs=self.color_jobs,
         )
 
         return selected_card

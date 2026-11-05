@@ -24,7 +24,6 @@ def main():
         QWidget {
             color: #f1f5f9;
             font-family: 'Segoe UI', Arial, sans-serif;
-            font-size: 13px;
         }
         QLabel {
             color: #f1f5f9;

@@ -165,7 +165,7 @@ class TestReportDialog(QDialog):
             value_label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
-            value_label.setStyleSheet("font-size: 17px; font-weight: 700;")
+            value_label.setStyleSheet("font-weight: 700;")
             stats_layout.addWidget(key_label, row, column * 2)
             stats_layout.addWidget(value_label, row, column * 2 + 1)
             value_labels[label] = value_label

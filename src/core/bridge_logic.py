@@ -57,6 +57,22 @@ class BridgeLogic:
         return None
 
     @classmethod
+    def derive_risk_status(cls, bidding_history: List[str]) -> str:
+        """Return the doubling status established by the auction route."""
+        risk_status = "NONE"
+        for call in bidding_history:
+            parsed = cls.parse_call(call)
+            if not parsed:
+                continue
+            if parsed["type"] == "BID":
+                risk_status = "NONE"
+            elif parsed["type"] == "DOUBLE":
+                risk_status = "DOUBLE"
+            elif parsed["type"] == "REDOUBLE":
+                risk_status = "REDOUBLE"
+        return risk_status
+
+    @classmethod
     def is_legal_call(cls, call_to_check: str, bidding_history: List[str]) -> bool:
         """
         Check whether a call is legal:

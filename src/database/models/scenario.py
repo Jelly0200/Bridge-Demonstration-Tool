@@ -1,6 +1,8 @@
 # src/database/models/scenario.py
 from typing import Optional, Dict, Any
 
+from src.core.bridge_logic import BridgeLogic
+
 
 class Scenario:
     def __init__(
@@ -23,7 +25,9 @@ class Scenario:
         self.bidding_route = bidding_route
         self.declarer = declarer
         self.contract = contract
-        self.risk_status = risk_status
+        self.risk_status = BridgeLogic.derive_risk_status(
+            (bidding_route or "").split()
+        )
         self.is_targeted = is_targeted
         self.targeted_sequence = targeted_sequence
 

@@ -5,7 +5,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QLabel,
+    QTableWidget,
+)
 
 from src.core.bridge_game import BridgeGameEngine
 from src.database.db_manager import DatabaseManager
@@ -58,7 +63,9 @@ class TestLockdown(unittest.TestCase):
         )
         self.assertTrue(self.window.toolbar.isHidden())
         self.assertTrue(self.window.menuBar().isHidden())
-        self.assertTrue(self.window.table_view.btn_view_mode.isHidden())
+        self.assertFalse(
+            self.window.table_view.view_actions["ANALYSIS"].isEnabled()
+        )
 
         with patch(
             "src.ui.main_window.QInputDialog.getText",
@@ -72,7 +79,9 @@ class TestLockdown(unittest.TestCase):
         self.assertIs(self.window.left_stack.currentWidget(), self.window.left_widget)
         self.assertTrue(self.window.toolbar.isHidden())
         self.assertFalse(self.window.menuBar().isHidden())
-        self.assertFalse(self.window.table_view.btn_view_mode.isHidden())
+        self.assertTrue(
+            self.window.table_view.view_actions["ANALYSIS"].isEnabled()
+        )
         self.assertIsNone(self.window.table_view.scenario)
         self.assertEqual(self.window.tree_view.topLevelItemCount(), 1)
         self.assertEqual(
@@ -125,11 +134,25 @@ class TestLockdown(unittest.TestCase):
         self.assertTrue(self.window.table_view.test_playback_active)
         self.assertEqual(self.window.table_view.rule_mode, "LABEL")
         self.assertEqual(self.window.table_view.view_mode, "HIDDEN")
+        self.assertEqual(self.window.table_view.card_size, 43)
+        self.assertTrue(self.window.table_view.navigation_controls.isHidden())
+        self.assertTrue(self.window.table_view.btn_human_seat.isHidden())
+        self.assertEqual(self.window.table_view.center_info.font().pixelSize(), 20)
+        self.assertEqual(self.window.table_view.btn_bidding.font().pixelSize(), 18)
+        self.assertEqual(self.window.table_view.robot_move_delay_ms, 1200)
+        self.assertEqual(
+            self.window.table_view.robot_card_sound_choice,
+            "CLASSIC",
+        )
+        self.assertEqual(self.window.table_view.sound_volume_percent, 50)
+        self.assertTrue(self.window.table_view.robot_card_sound_enabled)
         self.assertEqual(
             self.window.table_view.scenario.bidding_route,
             "1NT PASS PASS PASS",
         )
-        self.assertEqual(self.window.table_view.scenario.risk_status, "DOUBLE")
+        self.assertEqual(self.window.table_view.scenario.risk_status, "NONE")
+        self.assertTrue(self.window.table_view.btn_bidding.isEnabled())
+        self.assertTrue(self.window.table_view.bidding_action.isEnabled())
         self.assertEqual(
             self.window.table_view.scenario.information,
             "Keep the auction and vulnerability settings.",
@@ -154,7 +177,7 @@ class TestLockdown(unittest.TestCase):
         self.assertEqual(self.window.table_view.scenario.is_targeted, 1)
         self.assertEqual(self.window.table_view.scenario.contract, "1NT")
         self.assertEqual(self.window.table_view.scenario.declarer, "SOUTH")
-        self.assertEqual(self.window.table_view.game.risk_status, "DOUBLE")
+        self.assertEqual(self.window.table_view.game.risk_status, "NONE")
         self.assertEqual(
             self.window.table_view.target_sequence,
             target_sequence,
@@ -173,46 +196,19 @@ class TestLockdown(unittest.TestCase):
         )
 
         dialogs = []
-
-        def capture_settings_dialog(*args, **kwargs):
-            dialog = TestScenarioDialog(*args, **kwargs)
-            dialogs.append(dialog)
-            return dialog
-
-        with (
-            patch(
-                "src.ui.views.table_view.TestScenarioDialog",
-                side_effect=capture_settings_dialog,
-            ),
-            patch(
-                "src.ui.views.table_view.BiddingBoxDialog",
-                side_effect=AssertionError(
-                    "Test settings must not open the auction editor."
-                ),
-            ),
-            patch.object(QDialog, "exec", return_value=0),
+        with patch(
+            "src.ui.views.table_view.exec_and_delete",
+            side_effect=dialogs.append,
         ):
             self.window.table_view.open_settings()
 
         settings = dialogs[0]
         self.addCleanup(settings.close)
-        self.assertEqual(
-            [
-                label.text()
-                for label in settings.findChildren(QLabel)
-                if label.objectName() == "metricValue"
-            ],
-            ["1NT PASS PASS PASS"],
-        )
-        self.assertEqual(
-            [
-                label.text()
-                for label in settings.findChildren(QLabel)
-                if label.objectName() == "informationText"
-            ],
-            ["Keep the auction and vulnerability settings."],
-        )
-        self.assertEqual(settings.findChildren(QTableWidget), [])
+        self.assertEqual(settings.windowTitle(), "Bidding")
+        self.assertTrue(settings.read_only)
+        self.assertEqual(settings.auction_table.rowCount(), 1)
+        self.assertFalse(settings.btn_save.isVisible())
+        self.assertEqual(settings.btn_cancel.text(), "Close")
 
     def test_test_run_selects_one_candidate_scenario_for_each_problem(self):
         test = {
@@ -419,6 +415,39 @@ class TestLockdown(unittest.TestCase):
         dialog.action_button.click()
 
         self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+
+    def test_administrator_run_test_is_a_preview_without_student_or_saved_result(self):
+        test = {
+            "id": 42,
+            "name": "Practice quiz",
+            "problems": [{"scenario_ids": [10], "scores": {}}],
+        }
+        with (
+            patch.object(self.window.repo, "get_tests_by_admin", return_value=[test]),
+            patch.object(self.window.repo, "get_test_by_name", return_value=test),
+            patch.object(self.window, "enter_lockdown", return_value=True),
+            patch.object(self.window, "_start_next_test_scenario"),
+            patch(
+                "src.ui.main_window.QInputDialog.getItem",
+                return_value=("Practice quiz", True),
+            ),
+            patch("src.ui.main_window.StudentIdentityDialog") as identity_dialog,
+            patch.object(self.window.repo, "save_test_result") as save_result,
+            patch("src.ui.main_window.TestScenarioDialog") as result_dialog,
+            patch("src.ui.main_window.exec_and_delete", return_value=0),
+        ):
+            self.window.run_test_from_menu()
+
+            self.assertTrue(self.window.lockdown_test_preview)
+            self.assertIsNone(self.window.lockdown_student_id)
+            identity_dialog.assert_not_called()
+            self.window.lockdown_score = 12
+            self.window._finish_lockdown_test()
+
+        save_result.assert_not_called()
+        details = result_dialog.call_args.kwargs["details"]
+        self.assertIn(("Administrator preview", "Results are not saved."), details)
+        self.assertFalse(self.window.lockdown_test_preview)
 
     def test_student_identity_dialog_verifies_registered_student(self):
         student_id = self.repo.create_student("Registered student", "secure password")

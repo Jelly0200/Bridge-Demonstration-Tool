@@ -20,6 +20,7 @@ from src.database.db_manager import DatabaseManager
 from src.database.repository import Repository
 from src.security.passwords import is_password_hash
 from src.ui.dialogs.admin_registration_dialog import AdminRegistrationDialog
+from src.ui.dialogs.login_dialog import LoginDialog
 from src.ui.dialogs.instructions_dialog import InstructionsDialog
 from src.ui.dialogs.monitor_dialog import MonitorDialog
 from src.ui.main_window import MainWindow
@@ -40,6 +41,30 @@ class TestAdminRegistration(unittest.TestCase):
 
     def tearDown(self):
         DatabaseManager._instance = None
+
+    def test_login_dialog_focuses_username_field_when_shown(self):
+        dialog = LoginDialog()
+        self.addCleanup(dialog.close)
+        dialog.username_input.setText("teacher")
+        dialog.show()
+        QTest.qWait(20)
+
+        self.assertTrue(dialog.username_input.hasFocus())
+        self.assertEqual(dialog.username_input.cursorPosition(), 7)
+
+    def test_admin_preferences_load_and_save_through_table_view(self):
+        admin_id, _ = self.repo.register_admin("preference_teacher", "key")
+        window = MainWindow()
+        self.addCleanup(window.close)
+        window._activate_admin(admin_id, "preference_teacher")
+
+        window.table_view.set_sound_volume(68)
+        window.table_view.set_card_size(42)
+        self.assertTrue(window._flush_admin_preferences())
+
+        preferences = self.repo.get_admin_preferences(admin_id)
+        self.assertEqual(preferences["sound_volume_percent"], 68)
+        self.assertEqual(preferences["card_size_px"], 42)
 
     def test_registration_hashes_password_and_creates_initial_workspace(self):
         admin_id, case_id = self.repo.register_admin("teacher", "correct horse")
@@ -773,7 +798,7 @@ class TestAdminRegistration(unittest.TestCase):
         self.assertEqual(window.table_view.labels, [])
         self.assertEqual(window.table_view.target_sequence, [])
         self.assertIsNone(window.table_view.robot)
-        self.assertEqual(window.table_view.btn_mode.text(), "Mode: Normal")
+        self.assertFalse(hasattr(window.table_view, "btn_mode"))
         window.set_mode("DEMONSTRATION")
         self.assertEqual(window.current_mode, "NORMAL")
 

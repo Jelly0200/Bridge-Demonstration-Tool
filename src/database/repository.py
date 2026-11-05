@@ -5,10 +5,21 @@ import sqlite3
 from datetime import date
 from typing import List, Optional, Dict, Any
 from src.database.db_manager import DatabaseManager
+from src.core.bridge_logic import BridgeLogic
 from src.database.models import (
     Admin, Folder, CaseStudy, BoardConfiguration, Board, Scenario, Label, Test, Rule, TestResult
 )
 from src.security.passwords import hash_password, is_password_hash, verify_password
+
+
+DEFAULT_PANEL_STYLES = {
+    "asset_tree_width_px": 380,
+    "upper_panel_height_px": 44,
+    "central_panel_height_px": 600,
+    "asset_tree_color": "#111827",
+    "upper_panel_color": "#111827",
+    "central_panel_color": "#0b1120",
+}
 
 
 class Repository:
@@ -16,6 +27,210 @@ class Repository:
         self.db = DatabaseManager()
 
     # --- Administration repository operations ---
+    def get_admin_preferences(
+        self,
+        admin_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            admin = cursor.execute(
+                "SELECT 1 FROM Administration WHERE Id = ?",
+                (admin_id,),
+            ).fetchone()
+            if admin is None:
+                return None
+            cursor.execute(
+                """INSERT OR IGNORE INTO AdministratorPreference
+                   (AdministrationId) VALUES (?)""",
+                (admin_id,),
+            )
+            row = cursor.execute(
+                "SELECT * FROM AdministratorPreference WHERE AdministrationId = ?",
+                (admin_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(
+                    f"Preferences for administrator {admin_id} were not found."
+                )
+            label_jobs = json.loads(row["LabelJobs"])
+            if not isinstance(label_jobs, dict):
+                raise ValueError(
+                    f"Preferences for administrator {admin_id} contain "
+                    "invalid label jobs."
+                )
+            sound_choice = row["SoundChoice"]
+            if sound_choice not in {"OFF", "CLASSIC"}:
+                sound_choice = "CLASSIC"
+            panel_styles = json.loads(row["PanelStyles"])
+            panel_styles = self._normalize_panel_styles(panel_styles)
+            conn.commit()
+            return {
+                "card_size_px": row["CardSizePx"],
+                "card_suit_symbol_size_px": row["CardSuitSymbolSizePx"],
+                "robot_delay_ms": row["RobotDelayMs"],
+                "sound_choice": sound_choice,
+                "sound_volume_percent": row["SoundVolumePercent"],
+                "dds_matrix_hidden": bool(row["DdsMatrixHidden"]),
+                "dds_display_mode": row["DdsDisplayMode"],
+                "view_mode": row["ViewMode"],
+                "perspective": row["Perspective"],
+                "human_seat": row["HumanSeat"],
+                "label_jobs": label_jobs,
+                "font_size_px": row["FontSizePx"],
+                "font_color": row["FontColor"],
+                "background_color": row["BackgroundColor"],
+                "panel_styles": panel_styles,
+            }
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _normalize_panel_styles(styles: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(styles, dict):
+            raise ValueError("Administrator panel styles must be an object.")
+        normalized = {**DEFAULT_PANEL_STYLES, **styles}
+        if set(normalized) != set(DEFAULT_PANEL_STYLES):
+            raise ValueError("Administrator panel styles contain unknown values.")
+        integer_ranges = {
+            "asset_tree_width_px": (280, 650),
+            "upper_panel_height_px": (36, 100),
+            "central_panel_height_px": (400, 1200),
+        }
+        for key, (minimum, maximum) in integer_ranges.items():
+            value = normalized[key]
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise ValueError(
+                    f"Unsupported administrator panel style: {key}"
+                )
+        for key in (
+            "asset_tree_color",
+            "upper_panel_color",
+            "central_panel_color",
+        ):
+            value = normalized[key]
+            if not isinstance(value, str) or not re.fullmatch(
+                r"#[0-9A-Fa-f]{6}",
+                value,
+            ):
+                raise ValueError(
+                    f"Unsupported administrator panel style: {key}"
+                )
+            normalized[key] = value.lower()
+        return normalized
+
+    def save_admin_preferences(
+        self,
+        admin_id: int,
+        preferences: Dict[str, Any],
+    ) -> None:
+        integer_ranges = {
+            "card_size_px": (35, 50),
+            "card_suit_symbol_size_px": (10, 35),
+            "font_size_px": (10, 24),
+            "robot_delay_ms": (300, 3000),
+            "sound_volume_percent": (0, 100),
+        }
+        for key, (minimum, maximum) in integer_ranges.items():
+            value = preferences.get(key)
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise ValueError(f"Unsupported administrator preference: {key}")
+
+        choices = {
+            "sound_choice": {"OFF", "CLASSIC"},
+            "dds_display_mode": {"TRICKS", "CONTRACT_OFFSET"},
+            "view_mode": {"ANALYSIS", "HIDDEN"},
+            "perspective": {"SOUTH", "WEST", "NORTH", "EAST"},
+            "human_seat": {"SOUTH", "WEST", "NORTH", "EAST"},
+        }
+        for key, supported_values in choices.items():
+            if preferences.get(key) not in supported_values:
+                raise ValueError(f"Unsupported administrator preference: {key}")
+        font_color = preferences.get("font_color")
+        if not isinstance(font_color, str) or not re.fullmatch(
+            r"#[0-9A-Fa-f]{6}",
+            font_color,
+        ):
+            raise ValueError("Unsupported administrator preference: font_color")
+        background_color = preferences.get("background_color")
+        if not isinstance(background_color, str) or not re.fullmatch(
+            r"#[0-9A-Fa-f]{6}",
+            background_color,
+        ):
+            raise ValueError(
+                "Unsupported administrator preference: background_color"
+            )
+
+        boolean_keys = ("dds_matrix_hidden",)
+        for key in boolean_keys:
+            if type(preferences.get(key)) is not bool:
+                raise ValueError(f"Unsupported administrator preference: {key}")
+
+        label_jobs = preferences.get("label_jobs")
+        if not isinstance(label_jobs, dict):
+            raise ValueError("Administrator label jobs must be an object.")
+        panel_styles = self._normalize_panel_styles(
+            preferences.get("panel_styles")
+        )
+
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            if cursor.execute(
+                "SELECT 1 FROM Administration WHERE Id = ?",
+                (admin_id,),
+            ).fetchone() is None:
+                raise LookupError(f"Administrator {admin_id} was not found.")
+            cursor.execute(
+                """INSERT INTO AdministratorPreference (
+                   AdministrationId, CardSizePx, CardSuitSymbolSizePx,
+                   FontSizePx, FontColor,
+                   BackgroundColor, PanelStyles,
+                   RobotDelayMs,
+                   SoundChoice, SoundVolumePercent, DdsMatrixHidden,
+                   DdsDisplayMode, ViewMode, Perspective, HumanSeat,
+                   LabelJobs
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(AdministrationId) DO UPDATE SET
+                   CardSizePx = excluded.CardSizePx,
+                   CardSuitSymbolSizePx = excluded.CardSuitSymbolSizePx,
+                   FontSizePx = excluded.FontSizePx,
+                   FontColor = excluded.FontColor,
+                   BackgroundColor = excluded.BackgroundColor,
+                   PanelStyles = excluded.PanelStyles,
+                   RobotDelayMs = excluded.RobotDelayMs,
+                       SoundChoice = excluded.SoundChoice,
+                       SoundVolumePercent = excluded.SoundVolumePercent,
+                       DdsMatrixHidden = excluded.DdsMatrixHidden,
+                       DdsDisplayMode = excluded.DdsDisplayMode,
+                       ViewMode = excluded.ViewMode,
+                       Perspective = excluded.Perspective,
+                       HumanSeat = excluded.HumanSeat,
+                       LabelJobs = excluded.LabelJobs,
+                       UpdatedAt = CURRENT_TIMESTAMP""",
+                (
+                    admin_id,
+                    preferences["card_size_px"],
+                    preferences["card_suit_symbol_size_px"],
+                    preferences["font_size_px"],
+                    font_color.lower(),
+                    background_color.lower(),
+                    json.dumps(panel_styles, ensure_ascii=False),
+                    preferences["robot_delay_ms"],
+                    preferences["sound_choice"],
+                    preferences["sound_volume_percent"],
+                    int(preferences["dds_matrix_hidden"]),
+                    preferences["dds_display_mode"],
+                    preferences["view_mode"],
+                    preferences["perspective"],
+                    preferences["human_seat"],
+                    json.dumps(label_jobs, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def get_admin_by_name(self, name: str) -> Optional[Admin]:
         conn = self.db.get_connection()
         try:
@@ -1518,6 +1733,9 @@ class Repository:
         name: str = "",
         information: Optional[str] = None,
     ) -> int:
+        risk_status = BridgeLogic.derive_risk_status(
+            (bidding_route or "").split()
+        )
         conn = self.db.get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -1569,6 +1787,9 @@ class Repository:
         targeted_sequence: Optional[str],
         information: Optional[str] = None,
     ):
+        risk_status = BridgeLogic.derive_risk_status(
+            (bidding_route or "").split()
+        )
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()

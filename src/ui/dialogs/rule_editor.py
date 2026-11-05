@@ -1,5 +1,6 @@
 import json
 
+from src.core.bridge_logic import BridgeLogic
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -27,19 +28,15 @@ class RuleEditorDialog(QDialog):
         self.resize(620, 520)
         self.scenario = scenario
         self.saved_labels = []
-        self.saved_risk_status = scenario.risk_status
+        self.saved_risk_status = BridgeLogic.derive_risk_status(
+            scenario.bidding_route.split()
+        )
         self.saved_is_targeted = int(bool(scenario.is_targeted))
         self.saved_targeted_sequence = scenario.targeted_sequence or "[]"
         self._init_ui(labels or [])
 
     def _init_ui(self, labels):
         layout = QVBoxLayout(self)
-
-        layout.addWidget(QLabel("Risk status:"))
-        self.risk_combo = QComboBox()
-        self.risk_combo.addItems(["NONE", "DOUBLE", "REDOUBLE"])
-        self.risk_combo.setCurrentText(self.scenario.risk_status)
-        layout.addWidget(self.risk_combo)
 
         target_layout = QHBoxLayout()
         target_layout.addWidget(QLabel("Targeted playback:"))
@@ -190,7 +187,9 @@ class RuleEditorDialog(QDialog):
             )
             return
 
-        self.saved_risk_status = self.risk_combo.currentText()
+        self.saved_risk_status = BridgeLogic.derive_risk_status(
+            self.scenario.bidding_route.split()
+        )
         self.saved_is_targeted = self.target_combo.currentIndex()
         self.saved_targeted_sequence = json.dumps(target_sequence)
         self.saved_labels = labels
