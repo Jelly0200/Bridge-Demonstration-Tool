@@ -74,6 +74,9 @@ ENGLISH_TO_CHINESE = {
     "Label cards": "标记牌张",
     "Show label definition": "显示标签定义",
     "Label definitions": "标签定义",
+    "Label.md": "标签.md",
+    "Follow DDS": "遵循 DDS",
+    "Override DDS": "覆盖 DDS",
     "Current label-color jobs used by the robot.": "机器人当前使用的颜色标签规则。",
     "Colors are checked in the listed order. OVERRIDE jobs run before DDS-best selection; FIRST and LAST choose the lowest or highest label sequence among DDS-best cards.": "颜色按照列出的顺序检查。OVERRIDE 规则在 DDS 最佳牌筛选前执行；FIRST 和 LAST 分别从 DDS 最佳牌中选择标签顺序最小或最大的牌。",
     "SCENARIO INFORMATION": "场景信息",
@@ -141,6 +144,12 @@ ENGLISH_TO_CHINESE = {
     "BLUE": "蓝色",
     "PURPLE": "紫色",
     "GREEN": "绿色",
+    "Red": "红色",
+    "Orange": "橙色",
+    "Yellow": "黄色",
+    "Blue": "蓝色",
+    "Purple": "紫色",
+    "Green": "绿色",
     "Clear label": "清除标签",
     "Welcome back, administrator [": "欢迎回来，管理员 [",
     "]!\nAdvanced access is active.": "]！\n高级权限已激活。",
@@ -707,7 +716,11 @@ def _translate_string(text: str, language: str) -> str:
 
 
 def translate_text(text: Any, language: str) -> Any:
-    if not isinstance(text, str) or "DDS" in text:
+    if not isinstance(text, str):
+        return text
+    if text in {"Follow DDS", "Override DDS"}:
+        return ENGLISH_TO_CHINESE[text] if language == "zh" else text
+    if "DDS" in text:
         return text
     return _translate_string(text, language)
 

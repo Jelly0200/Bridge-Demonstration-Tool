@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -14,8 +13,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from src.robot.label_evaluator import DEFAULT_COLOR_JOBS, LabelEvaluator
@@ -116,33 +115,20 @@ class LabelDefinitionDialog(QDialog):
         "PURPLE": "#a855f7",
         "GREEN": "#22c55e",
     }
-    JOB_DESCRIPTIONS = {
-        "OFF": "Ignore",
-        "FIRST": "First label sequence among DDS-best cards",
-        "LAST": "Last label sequence among DDS-best cards",
-        "OVERRIDE_FIRST": "Override DDS: first label sequence",
-        "OVERRIDE_LAST": "Override DDS: last label sequence",
-    }
-
     def __init__(self, color_jobs=None, language="en", parent=None):
         super().__init__(parent)
-        self.setWindowTitle(translate_text("Label definitions", language))
+        self.setWindowTitle(translate_text("Label.md", language))
         jobs = LabelEvaluator.normalize_color_jobs(color_jobs)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
         layout.setSpacing(12)
-        self.sequence_rows = []
         colors = LabelJobsDialog.COLORS
         phases = LabelJobsDialog.PHASES
         self.matrix = QTableWidget(len(phases), len(colors), self)
         self.matrix.setHorizontalHeaderLabels(
-            [translate_text(color.title(), language) for color in colors]
+            [f"#{number}" for number in range(1, len(colors) + 1)]
         )
-        for column, color in enumerate(colors):
-            self.matrix.horizontalHeaderItem(column).setForeground(
-                QColor(self.COLOR_VALUES[color])
-            )
         self.matrix.setVerticalHeaderLabels(
             [
                 translate_text(phase_title, language)
@@ -164,22 +150,47 @@ class LabelDefinitionDialog(QDialog):
         )
         self.matrix.verticalHeader().setMinimumWidth(125)
         for row, (phase, _phase_title) in enumerate(phases):
-            ordered_colors = LabelEvaluator.COLOR_PRIORITY[phase]
-            for priority, color in enumerate(ordered_colors, start=1):
-                self.sequence_rows.append(
-                    (phase, priority, color, jobs[phase][color])
+            phase_priority = LabelEvaluator.COLOR_PRIORITY[phase]
+            ordered_colors = [
+                color
+                for color in phase_priority
+                if jobs[phase][color].startswith("OVERRIDE_")
+            ] + [
+                color
+                for color in phase_priority
+                if not jobs[phase][color].startswith("OVERRIDE_")
+            ]
+            for column, color in enumerate(ordered_colors):
+                cell = QWidget(self.matrix)
+                cell_layout = QVBoxLayout(cell)
+                cell_layout.setContentsMargins(4, 4, 4, 4)
+                cell_layout.setSpacing(2)
+
+                color_label = QLabel(
+                    translate_text(color.title(), language),
+                    cell,
                 )
-            for column, color in enumerate(colors):
-                priority = ordered_colors.index(color) + 1
-                job = jobs[phase][color]
-                description = translate_text(
-                    self.JOB_DESCRIPTIONS[job],
-                    language,
+                color_label.setObjectName("labelColor")
+                color_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                color_label.setStyleSheet(
+                    f"color: {self.COLOR_VALUES[color]}; font-weight: 700;"
                 )
-                item = QTableWidgetItem(f"{priority}. {description}")
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setForeground(QColor("#cbd5e1"))
-                self.matrix.setItem(row, column, item)
+                cell_layout.addWidget(color_label)
+
+                dds_behavior = (
+                    "Override DDS"
+                    if jobs[phase][color].startswith("OVERRIDE_")
+                    else "Follow DDS"
+                )
+                dds_label = QLabel(
+                    translate_text(dds_behavior, language),
+                    cell,
+                )
+                dds_label.setObjectName("ddsBehavior")
+                dds_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                dds_label.setStyleSheet("color: #cbd5e1;")
+                cell_layout.addWidget(dds_label)
+                self.matrix.setCellWidget(row, column, cell)
         self.matrix.setMinimumHeight(300)
         layout.addWidget(self.matrix, 1)
 

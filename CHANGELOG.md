@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-07
+
+- Move language selection from **Tool** to **Preference** and add a direct **Explorer → Label.md** action, localized as **标签.md** in Chinese.
+- Show label definitions in a phase-by-color matrix ordered to match each phase's effective color-check sequence; identify each color as **Override DDS** or **Follow DDS**, with Chinese translations.
+
 ## 2026-10-28
 
 - In Hidden-view demonstrations, keep dummy concealed from a human defender until they play their first card in the opening trick.

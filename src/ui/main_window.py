@@ -1058,6 +1058,10 @@ class MainWindow(QMainWindow):
         )
         self.administration_menu = bar.addMenu("Administrator")
         self.preference_menu = bar.addMenu("Preference")
+        self.action_language = self.preference_menu.addAction(
+            "Language",
+            self.choose_language,
+        )
         self.action_admin_register = self.administration_menu.addAction(
             "Administration Registration", self.on_register_clicked
         )
@@ -1091,7 +1095,6 @@ class MainWindow(QMainWindow):
         self.tool_menu = bar.addMenu("Tool")
         self.action_monitor = self.tool_menu.addAction("Monitor", self.open_monitor)
         self.tool_menu.addAction("Instruction", self.open_instructions)
-        self.tool_menu.addAction("Language", self.choose_language)
         self.tool_menu.addAction(
             "Keyboard shortcuts", self.show_keyboard_shortcuts
         )
@@ -1261,8 +1264,7 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(table.rotate_action)
 
-        label_menu = self.explorer_menu.addMenu("Labels")
-        label_menu.addAction(table.label_action)
+        self.explorer_menu.addAction(table.label_action)
 
     def _add_preference_slider(self, menu, title, slider, unit):
         container = QWidget(menu)

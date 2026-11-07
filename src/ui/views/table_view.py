@@ -297,7 +297,7 @@ class TableView(QWidget):
             )
             self.rule_actions[mode] = action
 
-        self.label_action = QAction("Show label definition", self)
+        self.label_action = QAction("Label.md", self)
         self.label_action.triggered.connect(self.show_label_instructions)
 
         self.rotate_action = QAction("Rotate view", self)
