@@ -1,16 +1,5 @@
 # Changelog
 
-## 2026-11-09
-
-- Refine lockdown-test briefings to show the problem sequence, bidding route, and instructions without revealing scenario names.
-- Match the table's top strip to the central-panel background; enlarge test cards and center the larger play-information label above the play area.
-- Lower the side-seat labels slightly while keeping them above their hands.
-
-## 2026-11-07
-
-- Move language selection from **Tool** to **Preference** and add a direct **Explorer → Label.md** action, localized as **标签.md** in Chinese.
-- Show label definitions in a phase-by-color matrix ordered to match each phase's effective color-check sequence; identify each color as **Override DDS** or **Follow DDS**, with Chinese translations.
-
 ## 2026-10-28
 
 - In Hidden-view demonstrations, keep dummy concealed from a human defender until they play their first card in the opening trick.
@@ -55,3 +44,14 @@
 - Add a persistent **Preference → Styles** slider for card suit-symbol size (10–35 px), independently adjustable from the DDS badge size.
 - Migrate existing administrator preferences to the updated suit-symbol size constraint without losing saved preference values.
 - Use gray for NT and dark blue for spades in the bidding matrix and auction route; enlarge DDS result numbers on cards.
+
+## 2026-11-07
+
+- Move language selection from **Tool** to **Preference** and add a direct **Explorer → Label.md** action, localized as **标签.md** in Chinese.
+- Show label definitions in a phase-by-color matrix ordered to match each phase's effective color-check sequence; identify each color as **Override DDS** or **Follow DDS**, with Chinese translations.
+
+## 2026-11-09
+
+- Refine lockdown-test briefings to show the problem sequence, bidding route, and instructions without revealing scenario names.
+- Match the table's top strip to the central-panel background; enlarge test cards and center the larger play-information label above the play area.
+- Lower the side-seat labels slightly while keeping them above their hands.
