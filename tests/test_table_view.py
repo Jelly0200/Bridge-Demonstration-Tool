@@ -122,6 +122,31 @@ class TestTableView(unittest.TestCase):
             all((card.width(), card.height()) == (50, 70) for card in north_hand.cards)
         )
 
+    def test_side_seat_labels_have_extra_top_spacing(self):
+        self.table.load_board(self.board, self.configuration)
+        self.table.resize(900, 700)
+        self.table.show()
+        self.application.processEvents()
+
+        for seat in ("WEST", "EAST"):
+            label_top = self.table.seat_labels[seat].mapTo(
+                self.table.seat_containers[seat],
+                QPoint(0, 0),
+            ).y()
+            hand_top = self.table.hand_widgets[seat].geometry().top()
+            self.assertEqual(label_top, 18)
+            self.assertGreater(
+                hand_top,
+                self.table.seat_labels[seat].geometry().bottom(),
+            )
+
+        for seat in ("NORTH", "SOUTH"):
+            label_top = self.table.seat_labels[seat].mapTo(
+                self.table.seat_containers[seat],
+                QPoint(0, 0),
+            ).y()
+            self.assertEqual(label_top, 2)
+
     def test_card_size_preference_resizes_all_hands(self):
         self.table.load_board(self.board, self.configuration)
 
@@ -1077,6 +1102,39 @@ class TestTableView(unittest.TestCase):
         )
         self.assertIn("rgba(", self.table.center_info.styleSheet())
 
+    def test_test_playback_information_stays_above_the_play_area(self):
+        scenario = Scenario(
+            id=1,
+            board_id=1,
+            bidding_route="1NT PASS PASS PASS",
+            declarer="SOUTH",
+            contract="1NT",
+        )
+        self.table.load_board(
+            self.board,
+            self.configuration,
+            scenario,
+            test_playback=True,
+        )
+        self.table.resize(900, 700)
+        self.table.show()
+        self.application.processEvents()
+
+        info_top_left = self.table.center_info.mapTo(
+            self.table,
+            self.table.center_info.rect().topLeft(),
+        )
+        self.assertAlmostEqual(
+            info_top_left.x() + self.table.center_info.width() // 2,
+            self.table.rect().center().x(),
+            delta=1,
+        )
+        self.assertLess(
+            info_top_left.y() + self.table.center_info.height(),
+            self.table.table_canvas.geometry().top(),
+        )
+        self.assertEqual(self.table.center_info.font().pixelSize(), 24)
+
     def test_empty_suits_are_not_decorated_on_vertical_hands(self):
         west_hand = self.table.hand_widgets["WEST"]
         west_hand.set_hand(["SA"])
@@ -1314,10 +1372,10 @@ class TestTableView(unittest.TestCase):
             dialog.bidding_history,
             ["1NT", "PASS", "PASS", "PASS"],
         )
-        self.assertEqual(self.table.card_size, 43)
+        self.assertEqual(self.table.card_size, 50)
         self.assertTrue(self.table.navigation_controls.isHidden())
         self.assertTrue(self.table.btn_human_seat.isHidden())
-        self.assertEqual(self.table.center_info.font().pixelSize(), 20)
+        self.assertEqual(self.table.center_info.font().pixelSize(), 24)
         self.assertEqual(self.table.btn_bidding.font().pixelSize(), 18)
 
     def test_card_rank_suit_and_dds_value_fit_inside_the_card(self):

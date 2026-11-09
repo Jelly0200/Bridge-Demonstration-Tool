@@ -134,11 +134,17 @@ class TestLockdown(unittest.TestCase):
         self.assertTrue(self.window.table_view.test_playback_active)
         self.assertEqual(self.window.table_view.rule_mode, "LABEL")
         self.assertEqual(self.window.table_view.view_mode, "HIDDEN")
-        self.assertEqual(self.window.table_view.card_size, 43)
+        self.assertEqual(self.window.table_view.card_size, 50)
         self.assertTrue(self.window.table_view.navigation_controls.isHidden())
         self.assertTrue(self.window.table_view.btn_human_seat.isHidden())
-        self.assertEqual(self.window.table_view.center_info.font().pixelSize(), 20)
+        self.assertEqual(self.window.table_view.center_info.font().pixelSize(), 24)
         self.assertEqual(self.window.table_view.btn_bidding.font().pixelSize(), 18)
+        central_color = self.window.panel_styles["central_panel_color"]
+        self.assertIn(
+            "QWidget#upperTablePanel {\n"
+            f"                background-color: {central_color};",
+            self.window.styleSheet(),
+        )
         self.assertEqual(self.window.table_view.robot_move_delay_ms, 1200)
         self.assertEqual(
             self.window.table_view.robot_card_sound_choice,
@@ -156,6 +162,17 @@ class TestLockdown(unittest.TestCase):
         self.assertEqual(
             self.window.table_view.scenario.information,
             "Keep the auction and vulnerability settings.",
+        )
+        with (
+            patch(
+                "src.ui.views.table_view.TestScenarioDialog"
+            ) as information_dialog,
+            patch("src.ui.views.table_view.exec_and_delete"),
+        ):
+            self.window.table_view.show_description()
+        self.assertEqual(
+            information_dialog.call_args.args[1],
+            "Scenario information",
         )
         self.assertEqual(
             self.window.table_view.bidding_route,
@@ -375,6 +392,7 @@ class TestLockdown(unittest.TestCase):
         scenario = SimpleNamespace(
             bidding_route="1NT PASS PASS PASS",
             information="Use the auction to plan your defense.",
+            name="Opening lead",
         )
 
         with (
@@ -392,11 +410,16 @@ class TestLockdown(unittest.TestCase):
             self.window._start_next_test_scenario()
 
         output = self.window.lockdown_terminal.output.toPlainText()
-        self.assertIn("Bidding: 1NT PASS PASS PASS", output)
+        self.assertIn("Problem 1 of 1", output)
         self.assertIn(
-            "Scenario information: Use the auction to plan your defense.",
+            "Bidding route: 1NT - PASS - PASS - PASS",
             output,
         )
+        self.assertIn(
+            "Instructions: Use the auction to plan your defense.",
+            output,
+        )
+        self.assertNotIn("Opening lead", output)
 
     def test_test_result_dialog_is_styled_and_does_not_render_an_auction_table(self):
         dialog = TestScenarioDialog(

@@ -814,7 +814,7 @@ class MainWindow(QMainWindow):
                 background-color: {self.panel_styles["asset_tree_color"]};
             }}
             QWidget#upperTablePanel {{
-                background-color: {self.panel_styles["upper_panel_color"]};
+                background-color: {central_panel_color};
             }}
             QWidget#centralTablePanel {{
                 background-color: {central_panel_color};
@@ -2975,18 +2975,19 @@ class MainWindow(QMainWindow):
         bidding_route = problem.get("scenario_bidding_routes", {}).get(
             scenario_id
         ) or scenario.bidding_route
+        route_text = " - ".join((bidding_route or "").split())
         self.lockdown_terminal.write(
-            f"Bidding: {bidding_route or 'No bidding information.'}"
+            f"Problem {self.lockdown_scenario_index + 1} of "
+            f"{len(self.lockdown_scenarios)}"
+        )
+        self.lockdown_terminal.write(
+            f"Bidding route: {route_text or 'No bidding information.'}"
         )
         information = problem.get("scenario_information", {}).get(
             scenario_id
         ) or scenario.information
         if information:
-            self.lockdown_terminal.write(f"Scenario information: {information}")
-        self.lockdown_terminal.write(
-            f"Scenario {self.lockdown_scenario_index + 1} of "
-            f"{len(self.lockdown_scenarios)} started."
-        )
+            self.lockdown_terminal.write(f"Instructions: {information}")
 
     def _on_lockdown_scenario_completed(self):
         if not self.lockdown_active or self.table_view.game is None:

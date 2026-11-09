@@ -89,7 +89,7 @@ class TableView(QWidget):
     DDS_MATRIX_SEATS = ("NORTH", "SOUTH", "WEST", "EAST")
     ROBOT_MOVE_DELAY_MS = 1200
     ROBOT_CARD_ANIMATION_MS = 320
-    TEST_CARD_SIZE_PX = 43
+    TEST_CARD_SIZE_PX = 50
     TEST_ROBOT_MOVE_DELAY_MS = 1200
     TEST_SOUND_VOLUME_PERCENT = 50
     RECORD_BUTTON_DDS_GAP = 12
@@ -357,6 +357,7 @@ class TableView(QWidget):
             for seat in self.SEATS_CLOCKWISE
         }
         self.seat_containers = {}
+        self.seat_layouts = {}
         for label in self.seat_labels.values():
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setFont(QFont(label.font().family(), 16, QFont.Weight.Bold))
@@ -372,6 +373,7 @@ class TableView(QWidget):
             container = QWidget()
             container.setLayout(seat_layout)
             self.seat_containers[seat] = container
+            self.seat_layouts[seat] = seat_layout
 
         self.trick_area = QWidget()
         self.trick_grid = QGridLayout(self.trick_area)
@@ -685,7 +687,17 @@ class TableView(QWidget):
             self.table_canvas.height(),
         )
         self.table_canvas.lower()
-        self.info_overlay.setGeometry(0, 0, self.width(), 64)
+        overlay_height = (
+            self.info_overlay.height()
+            if self.test_playback_active
+            else 64
+        )
+        self.info_overlay.setGeometry(
+            0,
+            0,
+            self.width(),
+            overlay_height,
+        )
         self.dds_slot.move(
             max(0, self.width() - self.dds_slot.width()),
             0,
@@ -1368,6 +1380,15 @@ class TableView(QWidget):
                 self.SEATS_CLOCKWISE.index(seat) - bottom_index
             ) % 4
             hand.set_horizontal(relative_position in {0, 2})
+            side_label_top_margin = (
+                18 if relative_position in {1, 3} else 2
+            )
+            self.seat_layouts[seat].setContentsMargins(
+                2,
+                side_label_top_margin,
+                2,
+                2,
+            )
             self.table_grid.addWidget(
                 self.seat_containers[seat],
                 *positions[relative_position],
@@ -1523,14 +1544,18 @@ class TableView(QWidget):
         self._test_playback_appearance_active = self.test_playback_active
         if self.test_playback_active:
             center_font = QFont(self.center_info.font())
-            center_font.setPixelSize(20)
+            center_font.setPixelSize(24)
             self.center_info.setFont(center_font)
             bidding_font = QFont(self.btn_bidding.font())
             bidding_font.setPixelSize(18)
             self.btn_bidding.setFont(bidding_font)
-            self.center_info.setMinimumHeight(88)
-            self.center_info.setMaximumWidth(560)
-            self.info_overlay.setFixedHeight(100)
+            self.center_info.setMinimumHeight(120)
+            self.center_info.setMaximumWidth(680)
+            self.info_overlay.setFixedHeight(132)
+            self.info_overlay.layout().setAlignment(
+                self.center_info,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+            )
             self.btn_bidding.setMinimumHeight(48)
         else:
             self.center_info.setFont(QFont())
@@ -1538,6 +1563,10 @@ class TableView(QWidget):
             self.center_info.setMinimumHeight(66)
             self.center_info.setMaximumWidth(460)
             self.info_overlay.setFixedHeight(72)
+            self.info_overlay.layout().setAlignment(
+                self.center_info,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+            )
             self.btn_bidding.setMinimumHeight(0)
         self._position_overlay_widgets()
 
@@ -1578,7 +1607,11 @@ class TableView(QWidget):
         )
         dialog = TestScenarioDialog(
             "Scenario description",
-            self.scenario.name or "Scenario information",
+            (
+                "Scenario information"
+                if self.test_playback_active
+                else self.scenario.name or "Scenario information"
+            ),
             information=information,
             action_text="Close",
             eyebrow="SCENARIO INFORMATION",

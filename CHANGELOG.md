@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-09
+
+- Refine lockdown-test briefings to show the problem sequence, bidding route, and instructions without revealing scenario names.
+- Match the table's top strip to the central-panel background; enlarge test cards and center the larger play-information label above the play area.
+- Lower the side-seat labels slightly while keeping them above their hands.
+
 ## 2026-11-07
 
 - Move language selection from **Tool** to **Preference** and add a direct **Explorer → Label.md** action, localized as **标签.md** in Chinese.
