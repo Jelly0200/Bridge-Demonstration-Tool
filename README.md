@@ -52,22 +52,20 @@ Robot labels are restricted to the current DDS-best group (the legal cards with 
 
 - Python 3.10 or newer
 - Dependencies in `requirements.txt` (PyQt6 and cryptography)
-- Optional: the `dds3` native extension, built for the active Python minor version and operating system, to enable DDS-backed operations. See `dds/docs/python_interface.md` for build instructions.
+- Optional: the `dds3` native extension for DDS-backed analysis and robot moves. The application still runs without it, but DDS-dependent features are unavailable.
 
-When cloning this repository, initialize the DDS source submodule with:
+The DDS source is included as a Git submodule. Clone the repository with the submodule initialized:
 
 ```bash
 git clone --recurse-submodules https://github.com/Jelly0200/Bridge-Demonstration-Tool.git
 cd Bridge-Demonstration-Tool
 ```
 
-`dds3` is not included in `requirements.txt`. A native extension built for Python 3.14 will not load under Python 3.15, for example. The application can still be used without a compatible extension; DDS functionality that requires the solver will not be available.
-
-For this checkout, the available DDS extension is built for Python 3.14. Use `.venv314/bin/python -m src.main` (or select `.venv314/bin/python` as the IDE interpreter) to run the application with DDS enabled.
+If you already cloned the repository without its submodule, run `git submodule update --init --recursive` from the project root. A GitHub ZIP download does not initialize submodules.
 
 ## Install and run
 
-From the project root:
+For a basic install without DDS, run from the project root:
 
 ```bash
 python -m venv .venv
@@ -75,6 +73,30 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m src.main
 ```
+
+### Enable DDS (optional)
+
+`dds3` is a native extension and is not installed by `requirements.txt`. For this repository, the DDS build uses Python 3.14, so use a Python 3.14 environment to install and run the application with DDS enabled. A native extension built for one Python version or operating system may not work with another.
+
+First install Bazelisk and a C++ compiler. On macOS, you can install Bazelisk with `brew install bazelisk`; see [`dds/docs/python_interface.md`](dds/docs/python_interface.md) for platform-specific build prerequisites. Windows is not officially supported by the DDS project.
+
+If DDS is your goal, you can skip the basic `.venv` setup above. From the project root, create and activate a Python 3.14 environment, install the application dependencies, build the DDS wheel, and install it into that same environment:
+
+```bash
+python3.14 -m venv .venv314
+source .venv314/bin/activate
+python -m pip install -r requirements.txt
+
+cd dds
+bazelisk build -c opt //python:dds3_wheel_dist
+python -m pip install bazel-bin/python/dist/*.whl
+cd ..
+
+python -c "import dds3; print('DDS is ready')"
+python -m src.main
+```
+
+The import check should print `DDS is ready` without an error. If it fails, check that the wheel was built and installed successfully and that the application is being run with the same Python 3.14 environment. If you already have an active Python 3.14 environment, use it instead of creating `.venv314`.
 
 On Windows, activate the environment with `.venv\Scripts\activate` instead.
 

@@ -65,18 +65,18 @@
 
 - Python 3.10 或更新版本。
 - `requirements.txt` 中列出的依赖（包括 PyQt6 和 cryptography）。
-- 可选：与当前 Python 次版本及操作系统兼容的 `dds3` 原生扩展。
+- 可选：用于双明手分析和机器人出牌的 `dds3` 原生扩展。没有该扩展时，应用仍可运行，但依赖 DDS 求解器的功能不可用。
 
-克隆项目时，请使用以下命令初始化 DDS 源码子模块：
+DDS 源码作为 Git 子模块提供。克隆项目时，请同时初始化该子模块：
 
 ```bash
 git clone --recurse-submodules https://github.com/Jelly0200/Bridge-Demonstration-Tool.git
 cd Bridge-Demonstration-Tool
 ```
 
-`dds3` 不包含在 `requirements.txt` 中。若没有兼容扩展，应用仍可使用，但需要 DDS 求解器的功能不可用。
+如果已经克隆项目但没有初始化子模块，请在项目根目录运行 `git submodule update --init --recursive`。直接下载 GitHub ZIP 不会初始化子模块。
 
-在项目根目录运行：
+如暂时不需要 DDS，请在项目根目录运行以下命令；若要启用 DDS，请使用下方的 Python 3.14 步骤：
 
 ```bash
 python -m venv .venv
@@ -84,6 +84,30 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m src.main
 ```
+
+### 启用 DDS（可选）
+
+`dds3` 是原生扩展，不会由 `requirements.txt` 安装。本仓库的 DDS 构建配置使用 Python 3.14；若要启用 DDS，请使用 Python 3.14 环境安装并运行应用。为某个 Python 版本或操作系统构建的原生扩展，可能无法用于其他版本或系统。
+
+开始构建前，请先安装 Bazelisk 和 C++ 编译器。在 macOS 上，可运行 `brew install bazelisk` 安装 Bazelisk；其他平台所需的构建环境请参阅 [`dds/docs/python_interface.md`](dds/docs/python_interface.md)。DDS 项目目前尚未正式支持 Windows 构建。
+
+若要启用 DDS，可跳过上方的 `.venv` 安装步骤。在项目根目录创建并启用 Python 3.14 环境，安装应用依赖，构建 DDS wheel，然后将它安装到同一环境：
+
+```bash
+python3.14 -m venv .venv314
+source .venv314/bin/activate
+python -m pip install -r requirements.txt
+
+cd dds
+bazelisk build -c opt //python:dds3_wheel_dist
+python -m pip install bazel-bin/python/dist/*.whl
+cd ..
+
+python -c "import dds3; print('DDS 已就绪')"
+python -m src.main
+```
+
+如果导入检查没有报错并打印 `DDS 已就绪`，说明 DDS 已成功加载。若检查失败，请确认 wheel 已成功构建并安装，并且应用使用的是同一个 Python 3.14 环境。如果已有正在使用的 Python 3.14 环境，可直接使用，不必新建 `.venv314`。
 
 应用默认在当前工作目录中使用 `bridge_tool.db`。请从项目根目录启动，以便数据库保存在该目录。
 
