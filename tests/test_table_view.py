@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QFontMetrics
+from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
@@ -195,7 +195,7 @@ class TestTableView(unittest.TestCase):
                 self.assertEqual(card.dds_label.text(), "13")
                 self.assertGreaterEqual(
                     card.dds_label.height(),
-                    QFontMetrics(card.dds_label.font()).height() + 4,
+                    QFontMetrics(card.dds_label.font()).height() + 2,
                 )
 
     def test_playing_a_card_reuses_widgets_for_cards_still_in_each_hand(self):
@@ -976,7 +976,7 @@ class TestTableView(unittest.TestCase):
 
         south_hand = self.table.hand_widgets["SOUTH"]
         dds_font_size = south_hand.cards[0].dds_label.font().pointSize()
-        self.assertEqual(dds_font_size, 9)
+        self.assertEqual(dds_font_size, 11)
         self.table.set_suit_symbol_size(35)
 
         self.assertTrue(south_hand.cards)
@@ -1394,13 +1394,23 @@ class TestTableView(unittest.TestCase):
         self.assertEqual(card.dds_label.text(), "6")
         self.assertEqual(card.rank_label.font().pointSize(), 16)
         self.assertEqual(card.card_label.font().pointSize(), 32)
-        self.assertEqual(card.dds_label.font().pointSize(), 9)
-        self.assertEqual(card.dds_label.width(), 22)
+        self.assertEqual(card.dds_label.font().pointSize(), 11)
+        self.assertEqual(card.dds_label.font().weight(), QFont.Weight.Black)
+        self.assertEqual(card.dds_label.width(), 28)
         self.assertLess(card.rank_label.y(), card.height() // 3)
         self.assertGreater(card.dds_label.y(), card.height() // 2)
+        self.assertLessEqual(
+            abs(
+                card.dds_label.geometry().center().x()
+                - card.rect().center().x()
+            ),
+            1,
+        )
         self.assertLessEqual(card.rank_label.geometry().bottom(), card.height())
         self.assertLessEqual(card.card_label.geometry().bottom(), card.height())
         self.assertLessEqual(card.dds_label.geometry().bottom(), card.height())
+        self.assertIn("background: transparent", card.dds_label.styleSheet())
+        self.assertIn("border: none", card.dds_label.styleSheet())
 
     def test_label_sequence_appears_in_matching_label_color(self):
         self.table.load_board(self.board, self.configuration)

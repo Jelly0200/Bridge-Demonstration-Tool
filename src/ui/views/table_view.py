@@ -12,7 +12,14 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QActionGroup, QColor, QFont, QResizeEvent
+from PyQt6.QtGui import (
+    QAction,
+    QActionGroup,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QResizeEvent,
+)
 from PyQt6.QtMultimedia import QSoundEffect
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -135,6 +142,7 @@ class TableView(QWidget):
         self.central_panel_height_px = 600
         self.dds_trick_table: Optional[list[list[int]]] = None
         self.dds_card_scores: dict[str, int] = {}
+        self.dds_pbn_deal: Optional[str] = None
         self.lockdown_mode = False
         self.test_playback_active = False
         self._test_playback_appearance_active = False
@@ -361,6 +369,12 @@ class TableView(QWidget):
         for label in self.seat_labels.values():
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setFont(QFont(label.font().family(), 16, QFont.Weight.Bold))
+            metrics = QFontMetrics(label.font())
+            english_height = metrics.boundingRect(label.text()).height()
+            chinese_height = metrics.boundingRect(
+                translate_text(label.text(), "zh")
+            ).height()
+            label.setFixedHeight(max(english_height, chinese_height))
         for seat in self.SEATS_CLOCKWISE:
             seat_layout = QVBoxLayout()
             seat_layout.setContentsMargins(2, 2, 2, 2)
@@ -895,6 +909,7 @@ class TableView(QWidget):
         self.demonstration_result_shown = False
         self.dds_trick_table = None
         self.dds_card_scores = {}
+        self.dds_pbn_deal = None
         self.view_actions["ANALYSIS"].setChecked(True)
         self.rule_actions["LABEL"].setChecked(True)
         self._clear_dds_result_matrix()
@@ -985,14 +1000,22 @@ class TableView(QWidget):
         return game.contract or "PASSED_OUT", game.declarer or game.dealer, True
 
     def _refresh_dds_result(self, hands):
+        seats = ("NORTH", "EAST", "SOUTH", "WEST")
+        if not isinstance(hands, dict) or any(seat not in hands for seat in seats):
+            self.dds_pbn_deal = None
+            self._calculate_dds_result()
+            return
+        self.dds_pbn_deal = "N:" + " ".join(
+            hands[seat] for seat in seats
+        )
+        self._calculate_dds_result()
+
+    def _calculate_dds_result(self):
         self.dds_trick_table = None
-        if not self.dds_wrapper.is_available():
+        if not self.dds_pbn_deal or not self.dds_wrapper.is_available():
             self._clear_dds_result_matrix()
             return
-        pbn_deal = "N:" + " ".join(
-            hands[seat] for seat in ("NORTH", "EAST", "SOUTH", "WEST")
-        )
-        result = self.dds_wrapper.calc_dd_table_pbn(pbn_deal)
+        result = self.dds_wrapper.calc_dd_table_pbn(self.dds_pbn_deal)
         if result is None:
             self._clear_dds_result_matrix()
             return
@@ -1012,6 +1035,23 @@ class TableView(QWidget):
             self._render_dds_result_matrix()
         else:
             self._clear_dds_result_matrix()
+
+    def set_dds_provider(
+        self,
+        provider: str,
+        source_folder: str | None = None,
+    ):
+        if (
+            provider == self.dds_wrapper.provider
+            and source_folder is None
+        ):
+            return
+        self.dds_wrapper.set_provider(provider, source_folder=source_folder)
+        self.dds_trick_table = None
+        self.dds_card_scores = {}
+        self._calculate_dds_result()
+        self._refresh_card_dds_results()
+        self._update_dds_visibility()
 
     def _render_dds_result_matrix(self):
         if self.dds_trick_table is None:

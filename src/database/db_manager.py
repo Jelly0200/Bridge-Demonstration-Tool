@@ -3,18 +3,20 @@ import sqlite3
 import os
 from typing import Optional
 
+from config.settings import DB_PATH
+
 
 class DatabaseManager:
     _instance: Optional['DatabaseManager'] = None
 
-    def __new__(cls, db_path: str = "bridge_tool.db"):
+    def __new__(cls, db_path: str = DB_PATH):
         if cls._instance is None:
             cls._instance = super(DatabaseManager, cls).__new__(cls)
             cls._instance.db_path = db_path
             cls._instance._initialize_database()
         return cls._instance
 
-    def __init__(self, db_path: str = "bridge_tool.db"):
+    def __init__(self, db_path: str = DB_PATH):
         # Initialize the singleton only once.
         pass
 

@@ -16,13 +16,13 @@ A desktop application for administrators to organize bridge deals and scenarios,
 - Assign a color and sequence to each card label. Sequence numbers appear in the card's upper-right corner, and inserting or moving a label reorders only labels of that color. Selecting a different color updates the suggested sequence to that color's current count plus one.
 - Use Last move or Reset to review analysis play. Reset restores the oldest state still retained in the undo history.
 - Open Instructions for an in-app guide. The administrator-only Monitor shows aggregate resource counts for all administrators, including the current account, and local runtime/error status, without exposing saved asset contents.
-- Use the top-level **Preference**, **Administrator**, **Tool**, **Test**, and **Explorer** menus. Administrators register students and assign tests from Test → Student management; students use Administrator → Student login. Test → Examine test results displays saved results for the signed-in administrator. Explorer opens `README.md`, `requirements.txt`, and `Label.md`; in Chinese, the README entry opens `README_zh.md` and `Label.md` is displayed as `标签.md`.
+- Use the top-level **Preference**, **Administrator**, **Tool**, **Test**, and **Explorer** menus. Administrators register students and assign tests from Test → Student management; students use Administrator → Student login. Test → Examine test results displays saved results for the signed-in administrator. Explorer opens `README.md`, `requirements.txt`, `Label.md`, and the keyboard-shortcut reference; in Chinese, the README entry opens `README_zh.md` and `Label.md` is displayed as `标签.md`.
 - Export selected administrator workspace content as a single encrypted `.bdtpack` file and import it on another computer. Each import creates a separate destination administrator account; importing does not require an active administrator. The package uses scrypt key derivation and AES-256-GCM authenticated encryption.
 - Build tests from multiple problems. Each problem can include several candidate scenarios from one case; one candidate is selected for each problem every time the test runs. Each scenario has its own contract/stasis scoring rule, even when contracts are shared.
 - Run tests in Lockdown mode with hidden hands. Administrators assign tests to registered students. Student login automatically enters Lockdown and lists available tests; each assignment can be completed only once. Results are linked to the student account.
 - Generate an administrator-wide test report with score statistics, a contestant-by-problem matrix, scenario difficulty statistics, and the top three contestants; export it as a PDF in English or Chinese.
 - Validate bridge calls, legal card play, trick winners, and duplicate scoring in the core modules.
-- Use the optional `dds3` Python module through a DDS wrapper and robot agent when a compatible installation is available.
+- Choose no DDS, the registered or scanned `dds3` extension, or Endplay from **Tool → DDS source**. The Endplay adapter is kept in `endplay_provider/` and loads its native dependency only when selected.
 
 ## Scenario workflow
 
@@ -36,11 +36,19 @@ The central table represents a **scenario**, not a board:
 
 For a playable scenario, the auction must be complete and legal and the contract must be valid. Label mode does not require labels: when none are configured, robots use DDS recommendations only. Labels are optional overrides in label mode. Target mode requires a target-card sequence. A passed-out auction does not start a card-play demonstration.
 
-Use the single **Start/End** button to begin or stop a demonstration. For a target sequence, robot-controlled seats follow the recorded cards automatically; label-rule demonstrations use the robot evaluator. Labels are hidden during demonstrations. Bidding remains available during demonstrations and tests; test playback shows the read-only bidding route without the bid matrix, and its **Information** action remains available. Next move is enabled during recorded-sequence demonstrations and disabled during label demonstrations. The Record target control remains disabled during demonstrations. Doubling status is derived from the auction route. When all 13 tricks are played, a result dialog shows the final contract, doubling, and outcome (for example, `4HXX=`). Robot card plays slide from the player's hand to the trick area, with a configurable pause between automated plays. **Preference → Robot** controls the playback delay and whether robots follow a recorded sequence or labels. **Preference → Sound** contains a card-sound toggle and volume slider. **Explorer → Label.md** displays each phase's six colors in the same effective check order described below; each cell shows its color and whether it overrides or follows DDS. Administrator preferences are saved automatically and restored at sign-in. **Preference → Styles** controls card width, card suit-symbol size, application font size (10–24 px), font color, and background color; it also lets administrators change the asset-tree width, upper-panel height, central-panel height, and the background color of each panel. Test playback fixes card width to 43 px, robot delay to 1200 ms, and sound volume to 50%; move navigation and the human-seat control are hidden. Played cards sit at the four compass points around the center, aligned with its horizontal and vertical axes. During Analysis view, legal cards in the hand to play show the DDS tricks available to that side in compact badges near the bottom-right of each card. Use **Preference → View → Rotate view** to change table orientation. The **DDS: Tricks** control switches between trick counts and the declaring side's margin relative to the contract target on the cards. In the matrix, **DDS: Contract ±** displays `max(0, tricks - 6)` for each seat and strain. The DDS result matrix sits at the upper-right of the table panel; use **Preference → DDS → Show DDS matrix** to toggle it. The matrix remains blank when the solver is unavailable.
+The application starts with DDS disabled. Choose **Tool → DDS source** to use no solver, the B registered DDS extension, scan a folder with C, or use Endplay. B checks the last DDS folder registered in the application database and reports whether its native extension can be loaded; without a registered folder it reports not installed. C is always available, starts at the project-relative `dds` source folder, and lets you choose another folder; a successfully loaded C source becomes the registered folder used by B next time. Scanning looks for a built extension in the DDS Python package, virtual environments, and Bazel output folders; it does not compile DDS. Endplay bundles DDS and is conditionally installed by `python -m pip install -r requirements.txt` on supported x64 CPython 3.10–3.13 environments; selecting Endplay in the application remains optional. See [Endplay's installation guide](https://endplay.readthedocs.io/en/latest/pages/readme/02_building_and_installing.html). The source selection is saved for this computer. The administrator-only **Tool → Monitor** presents asset counts, runtime status, and recent application errors.
+
+For Windows users choosing Endplay, use 64-bit CPython 3.13 and install `requirements.txt` in the same environment as the application; its environment marker installs the Endplay wheel automatically. Endplay's current installation guide lists Windows x64 wheels for CPython 3.9–3.13, not 3.14; unsupported versions or architectures may require a C++ source build. The Python 3.14 requirement below applies only to this repository's separate `dds3` provider.
+
+The project-owned `endplay_provider/` folder defines the `calc_dd_table_pbn` and `solve_board_pbn` adapter interface used by `DdsWrapper`. It is named separately from the installed third-party `endplay` package to prevent import-name conflicts.
+
+See `ENDPLAY_PERFORMANCE_REPORT.txt` for a local DDS3-versus-Endplay benchmark and its platform limitations.
+
+Use the single **Start/End** button to begin or stop a demonstration. For a target sequence, robot-controlled seats follow the recorded cards automatically; label-rule demonstrations use the robot evaluator. Labels are hidden during demonstrations. Bidding remains available during demonstrations and tests; test playback shows the read-only bidding route without the bid matrix, and its **Information** action remains available. Next move is enabled during recorded-sequence demonstrations and disabled during label demonstrations. The Record target control remains disabled during demonstrations. Doubling status is derived from the auction route. When all 13 tricks are played, a result dialog shows the final contract, doubling, and outcome (for example, `4HXX=`). Robot card plays slide from the player's hand to the trick area, with a configurable pause between automated plays. **Preference → Robot** controls the playback delay and whether robots follow a recorded sequence or labels. **Preference → Sound** contains a card-sound toggle and volume slider. **Explorer → Label.md** displays each phase's six colors in the same effective check order described below; each cell shows its color and whether it overrides or follows DDS. Administrator preferences are saved automatically and restored at sign-in. **Preference → Styles** controls card width, card suit-symbol size, application font size (10–24 px), font color, and background color; it also lets administrators change the asset-tree width, upper-panel height, central-panel height, and the background color of each panel. Test playback fixes card width to 43 px, robot delay to 1200 ms, and sound volume to 50%; move navigation and the human-seat control are hidden. Played cards sit at the four compass points around the center, aligned with its horizontal and vertical axes. During Analysis view, legal cards in the hand to play show the DDS tricks available to that side as large, bold, borderless numbers centered at the bottom edge of each card. Use **Preference → View → Rotate view** to change table orientation. The **DDS: Tricks** control switches between trick counts and the declaring side's margin relative to the contract target on the cards. In the matrix, **DDS: Contract ±** displays `max(0, tricks - 6)` for each seat and strain. The DDS result matrix sits at the upper-right of the table panel; use **Preference → DDS → Show DDS matrix** to toggle it. The matrix remains blank when the solver is unavailable.
 
 The central **Bidding** dialog centers both the auction route and bid matrix, with columns ordered NT, spades, hearts, diamonds, clubs and levels 1 through 7 from top to bottom. NT calls are gray, spades are dark blue, and the other strains retain their distinct colors in both the matrix and auction route. DDS result numbers are enlarged at the bottom of cards and remain independent of the suit-symbol size preference.
 
-Use **Preference → Language** to choose the interface language in a dialog. DDS labels and results remain in their standard notation.
+Use **Preference → Language → English/Chinese** to switch the interface language. DDS labels and results remain in their standard notation.
 
 **Preference → View → Analysis/Hidden** controls information visibility and remains changeable during a demonstration. Robots are inactive in Normal mode, and DDS results are shown only in Normal + Analysis. During a demonstration, the human seat, table rotation, and DDS display mode are locked. In a Hidden-view demonstration, a human on the declaring side sees declarer and dummy; a human on defense sees their own hand, and dummy is revealed after their first card in the opening trick. Student test playback hides rule labels while keeping them available to the robot. The other hands' cards are invisible, not shown as card backs. In Analysis view, right-click a card to add or change its color label. To record a target, play all 52 cards in Analysis; the **Record target** button remains visible but disabled until the deal is complete and a scenario is loaded. Clicking it saves the sequence with the scenario and leaves the completed deal visible. **Preference → Robot** selects whether the robot follows the saved sequence or labels.
 
@@ -52,7 +60,7 @@ Robot labels are restricted to the current DDS-best group (the legal cards with 
 
 - Python 3.10 or newer
 - Dependencies in `requirements.txt` (PyQt6 and cryptography)
-- Optional: the `dds3` native extension for DDS-backed analysis and robot moves. The application still runs without it, but DDS-dependent features are unavailable.
+- Optional: the `dds3` native extension, Endplay (which bundles DDS), or a built `dds3` extension in the scanned DDS source folder. DDS-dependent features are unavailable when no source is selected.
 
 The DDS source is included as a Git submodule. Clone the repository with the submodule initialized:
 
@@ -74,9 +82,9 @@ python -m pip install -r requirements.txt
 python -m src.main
 ```
 
-### Enable DDS (optional)
+### Enable `dds3` (optional)
 
-`dds3` is a native extension and is not installed by `requirements.txt`. For this repository, the DDS build uses Python 3.14, so use a Python 3.14 environment to install and run the application with DDS enabled. A native extension built for one Python version or operating system may not work with another.
+`dds3` is a native extension and is not installed by `requirements.txt`. For this repository, the `dds3` build uses Python 3.14, so use a Python 3.14 environment to build and run the application with that source enabled. A native extension built for one Python version or operating system may not work with another.
 
 First install Bazelisk and a C++ compiler. On macOS, you can install Bazelisk with `brew install bazelisk`; see [`dds/docs/python_interface.md`](dds/docs/python_interface.md) for platform-specific build prerequisites. Windows is not officially supported by the DDS project.
 
@@ -100,7 +108,7 @@ The import check should print `DDS is ready` without an error. If it fails, chec
 
 On Windows, activate the environment with `.venv\Scripts\activate` instead.
 
-The database manager initializes the SQLite schema from `schema.sql` and uses `bridge_tool.db` in the current working directory by default. Launch the application from the project root to keep the database there.
+The database manager initializes the SQLite schema from `schema.sql` and always uses the project-root `bridge_tool.db`, regardless of the launch directory. The application also switches to the project root at startup so DDS diagnostic `dump.txt` files are written to one consistent location.
 
 ## Tests
 
@@ -151,6 +159,8 @@ src/
     └── widgets/                 Hand display, bidding box, and DDS panel
 tests/                           unittest suite
 requirements.txt                 Python dependencies
+endplay_provider/                Endplay-to-DDS adapter
+ENDPLAY_PERFORMANCE_REPORT.txt   Local DDS3/Endplay benchmark
 ```
 
 ## Implementation boundaries

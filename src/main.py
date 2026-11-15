@@ -1,10 +1,16 @@
+import os
 import sys
+from pathlib import Path
+
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 def main():
+    os.chdir(PROJECT_ROOT)
     app = QApplication(sys.argv)
     app.setApplicationName("Bridge Demonstration Tool")
     palette = app.palette()

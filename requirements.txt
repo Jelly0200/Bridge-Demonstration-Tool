@@ -1,2 +1,4 @@
 PyQt6>=6.5.0
 cryptography>=44.0.0
+# Install the published x64 CPython wheels; unsupported environments skip Endplay.
+endplay==0.5.12; python_version >= "3.10" and python_version < "3.14" and platform_python_implementation == "CPython" and (platform_machine == "x86_64" or platform_machine == "AMD64") and (platform_system == "Windows" or platform_system == "Linux" or platform_system == "Darwin")

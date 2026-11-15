@@ -12,8 +12,8 @@ try:
 except ImportError:
     resource = None
 
-from PyQt6.QtCore import QObject, Qt, QTimer
-from PyQt6.QtGui import QAction, QColor, QFont, QKeySequence, QShortcut
+from PyQt6.QtCore import QObject, QSettings, Qt, QTimer
+from PyQt6.QtGui import QAction, QActionGroup, QColor, QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -48,10 +48,16 @@ from PyQt6.QtWidgets import (
 
 from src.database.repository import Repository
 from src.core.content_transfer import ContentTransferService
+from src.core.dds_wrapper import (
+    DDS_PROVIDERS,
+    DdsProviderUnavailable,
+    DdsWrapper,
+)
 from src.security.passwords import hash_password
 from src.ui.dialogs.admin_registration_dialog import AdminRegistrationDialog
 from src.ui.dialogs.admin_expiration_dialog import AdminExpirationDialog
 from src.ui.dialogs.board_editor import BoardEditorDialog
+from src.ui.dialogs.dds_source_dialog import DdsSourceDialog
 from src.ui.dialogs.export_selection_dialog import ExportSelectionDialog
 from src.ui.dialogs.login_dialog import LoginDialog
 from src.ui.dialogs.instructions_dialog import InstructionsDialog
@@ -604,6 +610,10 @@ class MainWindow(QMainWindow):
         self.active_case_id = None
         self.panel_styles = dict(DEFAULT_PANEL_STYLES)
         self._applying_admin_preferences = False
+        self.dds_source_settings = QSettings(
+            "Jelly0200",
+            "BridgeDemonstrationTool",
+        )
         self.runtime_errors = deque(maxlen=10)
         self.lockdown_active = False
         self.lockdown_student_session = False
@@ -630,6 +640,7 @@ class MainWindow(QMainWindow):
         self.resize(1600, 1000)
         self.statusBar()
         self.language_controller.install(self)
+        self._restore_dds_provider()
         self._apply_panel_styles(self.panel_styles, refresh_theme=False)
         self._apply_app_theme()
         self._update_admin_indicator()
@@ -885,6 +896,8 @@ class MainWindow(QMainWindow):
         asset_actions = QGridLayout()
         asset_actions.setHorizontalSpacing(4)
         asset_actions.setVerticalSpacing(4)
+        asset_actions.setColumnStretch(0, 1)
+        asset_actions.setColumnStretch(1, 1)
         self.btn_add_asset = QPushButton("Add")
         self.btn_add_asset.setToolTip("Add a child asset (Insert key or right-click menu).")
         self.btn_add_asset.clicked.connect(self.add_asset)
@@ -896,10 +909,10 @@ class MainWindow(QMainWindow):
         self.btn_delete_asset = QPushButton("Delete")
         self.btn_delete_asset.setToolTip("Delete the selected asset and its children (Delete).")
         self.btn_delete_asset.clicked.connect(self.delete_asset)
-        asset_actions.addWidget(self.btn_delete_asset, 0, 2)
+        asset_actions.addWidget(self.btn_delete_asset, 1, 0)
         self.btn_duplicate_asset = QPushButton("Duplicate")
         self.btn_duplicate_asset.clicked.connect(self.duplicate_asset)
-        asset_actions.addWidget(self.btn_duplicate_asset, 1, 0, 1, 2)
+        asset_actions.addWidget(self.btn_duplicate_asset, 1, 1)
         self.btn_move_asset = QPushButton("Move")
         self.btn_move_asset.setToolTip(
             "Choose a new parent and review the move before confirming."
@@ -1058,10 +1071,23 @@ class MainWindow(QMainWindow):
         )
         self.administration_menu = bar.addMenu("Administrator")
         self.preference_menu = bar.addMenu("Preference")
-        self.action_language = self.preference_menu.addAction(
-            "Language",
-            self.choose_language,
+        self.language_menu = self.preference_menu.addMenu("Language")
+        self.action_language = self.language_menu.menuAction()
+        self.language_action_group = QActionGroup(self)
+        self.language_action_group.setExclusive(True)
+        self.action_language_english = self.language_menu.addAction("English")
+        self.action_language_english.setCheckable(True)
+        self.action_language_chinese = self.language_menu.addAction("Chinese")
+        self.action_language_chinese.setCheckable(True)
+        self.language_action_group.addAction(self.action_language_english)
+        self.language_action_group.addAction(self.action_language_chinese)
+        self.action_language_english.triggered.connect(
+            lambda _checked=False: self.set_language("en")
         )
+        self.action_language_chinese.triggered.connect(
+            lambda _checked=False: self.set_language("zh")
+        )
+        self.action_language_english.setChecked(True)
         self.action_admin_register = self.administration_menu.addAction(
             "Administration Registration", self.on_register_clicked
         )
@@ -1093,11 +1119,12 @@ class MainWindow(QMainWindow):
         )
 
         self.tool_menu = bar.addMenu("Tool")
+        self.action_dds_source = self.tool_menu.addAction(
+            "DDS source...",
+            self.open_dds_source_dialog,
+        )
         self.action_monitor = self.tool_menu.addAction("Monitor", self.open_monitor)
         self.tool_menu.addAction("Instruction", self.open_instructions)
-        self.tool_menu.addAction(
-            "Keyboard shortcuts", self.show_keyboard_shortcuts
-        )
 
         self.test_menu = bar.addMenu("Test")
         self.action_test_construction = self.test_menu.addAction(
@@ -1126,6 +1153,9 @@ class MainWindow(QMainWindow):
             lambda: self.show_project_document("requirements.txt"),
         )
         self.explorer_menu.addSeparator()
+        self.action_keyboard_shortcuts = self.explorer_menu.addAction(
+            "Keyboard shortcuts", self.show_keyboard_shortcuts
+        )
 
     def _build_preference_menu(self):
         table = self.table_view
@@ -1390,10 +1420,15 @@ class MainWindow(QMainWindow):
         self.language_controller.set_language(language)
         self.language_controller.install(self)
         self.tree_view.set_language(language)
+        self.action_dds_source.setText(
+            translate_text("DDS source...", language)
+        )
         self.btn_language.setText("中文" if language == "en" else "English")
         self.btn_language.setToolTip(
             translate_text("Switch between Chinese and English.", language)
         )
+        self.action_language_english.setChecked(language == "en")
+        self.action_language_chinese.setChecked(language == "zh")
 
     def show_keyboard_shortcuts(self):
         dialog = self._prepare_dialog(
@@ -3224,6 +3259,108 @@ class MainWindow(QMainWindow):
                 "Monitor unavailable",
                 f"Unable to read monitoring statistics: {error}",
             )
+
+    def _restore_dds_provider(self):
+        provider = self.dds_source_settings.value("DDS/source", "none")
+        if not isinstance(provider, str) or provider not in DDS_PROVIDERS:
+            provider = "none"
+        if provider == "none":
+            return
+        source_folder = self._get_registered_dds_source_folder()
+        if provider in {"dds3", "scanned"} and not source_folder:
+            error = "No DDS source folder is registered."
+            self.dds_source_settings.setValue("DDS/source", "none")
+            self.runtime_errors.append(error)
+            self.statusBar().showMessage(error, 10000)
+            return
+        try:
+            self.table_view.set_dds_provider(
+                provider,
+                source_folder=source_folder,
+            )
+        except DdsProviderUnavailable as error:
+            self.dds_source_settings.setValue("DDS/source", "none")
+            self.runtime_errors.append(str(error))
+            self.statusBar().showMessage(str(error), 10000)
+
+    def _get_registered_dds_source_folder(self) -> str | None:
+        folder = self.repo.get_application_setting("DDS_SOURCE_FOLDER")
+        if not folder:
+            return None
+        path = Path(folder).expanduser()
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[2] / path
+        return str(path.resolve())
+
+    def open_dds_source_dialog(self):
+        dialog = self._prepare_dialog(
+            DdsSourceDialog(
+                self.table_view.dds_wrapper.provider,
+                self,
+                source_folder=str(DdsWrapper.normalize_source_folder(None)),
+                registered_source_folder=self._get_registered_dds_source_folder(),
+            )
+        )
+        if not exec_and_delete(dialog):
+            return
+
+        provider = dialog.selected_provider()
+        source_folder = (
+            dialog.selected_source_folder()
+            if provider == "scanned"
+            else self._get_registered_dds_source_folder()
+        )
+        if provider == "dds3" and not source_folder:
+            show_message(
+                self,
+                "warning",
+                "DDS source unavailable",
+                "No DDS source folder is registered. Choose option C first.",
+            )
+            return
+        if provider in {"dds3", "scanned"} and (
+            not source_folder or not Path(source_folder).is_dir()
+        ):
+            show_message(
+                self,
+                "warning",
+                "DDS source unavailable",
+                "The selected DDS source folder does not exist.",
+            )
+            return
+        try:
+            self.table_view.set_dds_provider(
+                provider,
+                source_folder=source_folder,
+            )
+        except DdsProviderUnavailable as error:
+            show_message(
+                self,
+                "warning",
+                "DDS source unavailable",
+                str(error),
+            )
+            return
+
+        if provider == "scanned":
+            try:
+                self.repo.save_application_setting(
+                    "DDS_SOURCE_FOLDER",
+                    source_folder,
+                )
+            except sqlite3.Error as error:
+                self._show_asset_error(error)
+                show_message(
+                    self,
+                    "critical",
+                    "DDS source unavailable",
+                    f"Unable to register the DDS source folder: {error}",
+                )
+                return
+
+        self.dds_source_settings.setValue("DDS/source", provider)
+        self.dds_source_settings.sync()
+        self.statusBar().showMessage("DDS source updated", 5000)
 
     @staticmethod
     def _peak_process_memory_mb():

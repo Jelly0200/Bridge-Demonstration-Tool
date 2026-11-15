@@ -59,3 +59,10 @@
 ## 2026-11-14
 
 - Clarify optional DDS setup in both READMEs, including submodule initialization, Python 3.14 wheel build and installation, and an import check.
+
+## 2026-11-15
+
+- Refine card and table-label styling for improved readability.
+- Add a DDS source selector for disabled, registered, scanned, and Endplay providers, with persisted source choice and registered DDS-folder handling.
+- Add the `endplay_provider/` adapter interface, lazy Endplay loading, conditional Endplay 0.5.12 requirements for supported x64 CPython environments, and Windows Python 3.13 CI/runtime tests.
+- Document Windows Endplay setup and record a local DDS3-versus-Endplay performance benchmark with platform and variance limitations.

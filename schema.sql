@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS AdministratorPreference (
         REFERENCES Administration(Id) ON DELETE CASCADE
 );
 
+-- Application-wide settings store successfully registered DDS folders.
+CREATE TABLE IF NOT EXISTS ApplicationSetting (
+    SettingKey TEXT PRIMARY KEY,
+    SettingValue TEXT NOT NULL,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
 -- 2. Folder Hierarchy (Self-referencing tree)
 CREATE TABLE IF NOT EXISTS Folder (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,

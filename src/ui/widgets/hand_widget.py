@@ -73,10 +73,10 @@ class CardWidget(QFrame):
         )
         suit_font_size = self._suit_font_size()
         sequence_font_size = 7 if self.compact else 10
-        dds_font_size = 7 if self.compact else 9
+        dds_font_size = 8 if self.compact else 11
         rank_height = 8 if self.compact else 18 if self.large else 16
         dds_height = 7 if self.compact else 9
-        dds_width = 16 if self.compact else 22
+        dds_width = 18 if self.compact else 28
 
         layout = QGridLayout(self)
         layout.setContentsMargins(2, 1, 2, 1)
@@ -118,12 +118,12 @@ class CardWidget(QFrame):
         self.dds_label.setObjectName("dds_card_value")
         self.dds_label.setProperty("bilingualExempt", True)
         self.dds_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dds_font = QFont("Arial", dds_font_size, QFont.Weight.Bold)
+        dds_font = QFont("Arial", dds_font_size, QFont.Weight.Black)
         self.dds_label.setFont(dds_font)
-        dds_height = max(dds_height, QFontMetrics(dds_font).height() + 4)
+        dds_height = max(dds_height, QFontMetrics(dds_font).height() + 2)
         self.dds_label.setFixedSize(dds_width, dds_height)
         self.dds_label.setStyleSheet(
-            "color: #075985; background-color: #e0f2fe; border-radius: 2px;"
+            "color: #075985; background: transparent; border: none; padding: 0;"
         )
         self.dds_label.hide()
         for label in (
@@ -156,7 +156,8 @@ class CardWidget(QFrame):
             0,
             1,
             2,
-            alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
+            alignment=Qt.AlignmentFlag.AlignHCenter
+            | Qt.AlignmentFlag.AlignBottom,
         )
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)

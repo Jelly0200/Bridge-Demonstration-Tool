@@ -3,7 +3,9 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from config.settings import DB_PATH
 from src.database.db_manager import DatabaseManager
 from src.database.repository import Repository
 
@@ -20,6 +22,18 @@ class TestDatabase(unittest.TestCase):
     def tearDown(self):
         self.connection.close()
         DatabaseManager._instance = None
+
+    def test_default_database_path_is_project_root_from_any_working_directory(self):
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(self.temp_dir.name)
+            DatabaseManager._instance = None
+            with patch.object(DatabaseManager, "_initialize_database"):
+                manager = DatabaseManager()
+            self.assertEqual(manager.db_path, DB_PATH)
+        finally:
+            os.chdir(original_cwd)
+            DatabaseManager._instance = None
 
     def test_administrator_preferences_have_defaults_and_round_trip(self):
         repository = Repository()

@@ -6,7 +6,7 @@ from typing import Any
 
 from PyQt6 import sip
 from PyQt6.QtCore import QObject
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 
@@ -26,6 +26,47 @@ ENGLISH_TO_CHINESE = {
     "Sound strength (%)": "音量强度（%）",
     "Play card sound": "播放出牌音效",
     "DDS": "DDS",
+    "DDS source...": "DDS 来源...",
+    "DDS source": "DDS 来源",
+    "Choose one DDS source, or turn DDS off.": "选择一种 DDS 来源，或关闭 DDS。",
+    "Do not use DDS": "不使用 DDS",
+    "Native DDS module (dds3)": "原生 DDS 模块（dds3）",
+    "Endplay (bundled DDS)": "Endplay（内置 DDS）",
+    "A. No DDS": "A. 不使用 DDS",
+    "B. Registered DDS (last registered folder)": "B. 已登记的 DDS（上次登记目录）",
+    "C. Scan the DDS source folder": "C. 扫描 DDS 源码目录",
+    "D. Endplay (bundled DDS)": "D. Endplay（内置 DDS）",
+    "Browse...": "浏览...",
+    "DDS source folder": "DDS 源码目录",
+    "Choose DDS source folder": "选择 DDS 源码目录",
+    "The selected DDS source folder does not exist.": "所选 DDS 源码目录不存在。",
+    "No DDS source folder is registered.": "尚未登记 DDS 源码目录。",
+    "No DDS source folder is registered. Choose option C first.": (
+        "尚未登记 DDS 源码目录。请先选择 C。"
+    ),
+    "Load the DDS extension from its last registered folder.": (
+        "从上次登记的目录加载 DDS 扩展。"
+    ),
+    "Search the selected folder for a built native DDS module "
+    "and use it when found.": "自动扫描所选目录，找到已编译的 DDS 原生模块后使用。",
+    "Installed": "已安装",
+    "Not installed": "未安装",
+    "DDS source unavailable": "DDS 来源不可用",
+    "DDS source updated": "DDS 来源已更新",
+    "Choose a DDS source": "选择 DDS 来源",
+    "Choose one provider, or leave DDS turned off.": "选择一个来源，或保持 DDS 关闭。",
+    "Turn off DDS features without affecting the rest of the app.": "关闭 DDS 功能，不影响应用的其他部分。",
+    "Use the dds3 native extension when it is installed.": "使用已安装的 dds3 原生扩展。",
+    "Use the DDS library bundled with Endplay.": "使用 Endplay 附带的 DDS 库。",
+    "System monitor": "系统监控",
+    "Local activity and administrator asset overview.": "本机运行状态和管理员资源概览。",
+    "Asset counts": "资源数量",
+    "Folders": "文件夹",
+    "Cases": "牌例",
+    "Boards": "牌局",
+    "Scenarios": "场景",
+    "Runtime status": "运行状态",
+    "Recent application errors": "近期应用错误",
     "View": "视图",
     "Define color jobs...": "定义颜色用途...",
     "Card size": "牌张大小",
@@ -60,6 +101,10 @@ ENGLISH_TO_CHINESE = {
     "SOUTH": "南",
     "WEST": "西",
     "EAST": "东",
+    "NONE": "无",
+    "NS": "南北",
+    "EW": "东西",
+    "BOTH": "双方",
     "Last move": "上一步",
     "Next move": "下一步",
     "Reset": "重置",
@@ -720,7 +765,7 @@ def translate_text(text: Any, language: str) -> Any:
         return text
     if text in {"Follow DDS", "Override DDS"}:
         return ENGLISH_TO_CHINESE[text] if language == "zh" else text
-    if "DDS" in text:
+    if "DDS" in text and text not in ENGLISH_TO_CHINESE:
         return text
     return _translate_string(text, language)
 
@@ -829,7 +874,7 @@ class BilingualTextController:
 
             def add_item(*args):
                 values = list(args)
-                text_index = 1 if len(values) > 1 else 0
+                text_index = 1 if isinstance(values[0], QIcon) else 0
                 text = values[text_index]
                 if isinstance(text, str):
                     index = obj.count()

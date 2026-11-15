@@ -26,6 +26,36 @@ class Repository:
     def __init__(self):
         self.db = DatabaseManager()
 
+    def get_application_setting(self, key: str) -> Optional[str]:
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT SettingValue FROM ApplicationSetting "
+                "WHERE SettingKey = ?",
+                (key,),
+            ).fetchone()
+            return row["SettingValue"] if row is not None else None
+        finally:
+            conn.close()
+
+    def save_application_setting(self, key: str, value: str) -> None:
+        conn = self.db.get_connection()
+        try:
+            conn.execute(
+                """INSERT INTO ApplicationSetting (SettingKey, SettingValue)
+                   VALUES (?, ?)
+                   ON CONFLICT(SettingKey) DO UPDATE SET
+                       SettingValue = excluded.SettingValue,
+                       UpdatedAt = CURRENT_TIMESTAMP""",
+                (key, value),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     # --- Administration repository operations ---
     def get_admin_preferences(
         self,

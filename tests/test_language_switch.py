@@ -5,6 +5,7 @@ from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QLabel,
     QMessageBox,
@@ -12,6 +13,7 @@ from PyQt6.QtWidgets import (
     QTreeWidgetItem,
 )
 
+from src.database.models.case_board import Board, BoardConfiguration
 from src.ui.main_window import MainWindow
 from src.ui.i18n import translate_text
 from src.security.passwords import hash_password
@@ -41,6 +43,7 @@ class TestLanguageSwitch(unittest.TestCase):
         )
         self.assertEqual(window.language, "zh")
         self.assertEqual(window.btn_language.text(), "English")
+        self.assertEqual(window.action_dds_source.text(), "DDS 来源...")
         self.assertEqual(window.btn_test_mode.text(), "练习构建")
         self.assertEqual(window.btn_add_asset.text(), "添加")
         self.assertEqual(window.toolbar.windowTitle(), "控制工具栏")
@@ -85,28 +88,20 @@ class TestLanguageSwitch(unittest.TestCase):
         )
         self.assertEqual(
             [action.text() for action in window.preference_menu.actions()],
-            ["DDS", "Styles", "Robot", "Sound", "View"],
+            ["Language", "DDS", "Styles", "Robot", "Sound", "View"],
         )
         preference_submenus = {
             action.text(): action.menu()
             for action in window.preference_menu.actions()
-        }
-        explorer_submenus = {
-            action.text(): action.menu()
-            for action in window.explorer_menu.actions()
-            if action.menu() is not None
         }
         self.assertEqual(
             [action.text() for action in preference_submenus["DDS"].actions()
              if not action.isSeparator()],
             ["Show DDS matrix", "Tricks", "Contract tricks"],
         )
-        self.assertEqual(
-            [
-                action.text()
-                for action in explorer_submenus["Labels"].actions()
-            ],
-            ["Show label definition"],
+        self.assertIn(
+            "Label.md",
+            [action.text() for action in window.explorer_menu.actions()],
         )
         styles_actions = [
             action
@@ -243,27 +238,28 @@ class TestLanguageSwitch(unittest.TestCase):
         )
         self.assertEqual(
             [action.text() for action in window.preference_menu.actions()],
-            ["DDS", "样式", "机器人", "音效", "视图"],
+            ["语言", "DDS", "样式", "机器人", "音效", "视图"],
         )
 
-    def test_language_menu_opens_a_choice_dialog_before_switching(self):
+    def test_language_preference_submenu_switches_languages(self):
         window = MainWindow()
         self.addCleanup(window.close)
 
-        with patch(
-            "src.ui.main_window.QInputDialog.getItem",
-            return_value=("中文", False),
-        ) as choose:
-            window.choose_language()
-        choose.assert_called_once()
-        self.assertEqual(window.language, "en")
-
-        with patch(
-            "src.ui.main_window.QInputDialog.getItem",
-            return_value=("中文", True),
-        ):
-            window.choose_language()
+        self.assertEqual(
+            [action.text() for action in window.language_menu.actions()],
+            ["English", "Chinese"],
+        )
+        window.action_language_chinese.trigger()
         self.assertEqual(window.language, "zh")
+        self.assertTrue(window.action_language_chinese.isChecked())
+        self.assertEqual(
+            [action.text() for action in window.language_menu.actions()],
+            ["English", "中文"],
+        )
+
+        window.action_language_english.trigger()
+        self.assertEqual(window.language, "en")
+        self.assertTrue(window.action_language_english.isChecked())
 
     def test_tool_and_explorer_menus_open_reference_tools_not_asset_actions(self):
         window = MainWindow()
@@ -290,11 +286,14 @@ class TestLanguageSwitch(unittest.TestCase):
         self.assertEqual(
             [action.text() for action in window.tool_menu.actions()],
             [
+                "DDS source...",
                 "Monitor",
                 "Instruction",
-                "Language",
-                "Keyboard shortcuts",
             ],
+        )
+        self.assertIn(
+            window.action_keyboard_shortcuts,
+            window.explorer_menu.actions(),
         )
         self.assertTrue(window.table_view.robot_card_sound_action.isCheckable())
         self.assertTrue(window.table_view.robot_card_sound_action.isChecked())
@@ -317,7 +316,12 @@ class TestLanguageSwitch(unittest.TestCase):
                 for action in window.explorer_menu.actions()
                 if not action.isSeparator()
             ],
-            ["README.md", "requirements.txt", "Labels"],
+            [
+                "README.md",
+                "requirements.txt",
+                "Keyboard shortcuts",
+                "Label.md",
+            ],
         )
         with patch("src.ui.main_window.KeyboardShortcutsDialog") as dialog_class:
             window.show_keyboard_shortcuts()
@@ -491,7 +495,12 @@ class TestLanguageSwitch(unittest.TestCase):
                 for action in window.explorer_menu.actions()
                 if not action.isSeparator()
             ],
-            ["项目说明（README.md）", "依赖清单（requirements.txt）", "标签"],
+            [
+                "项目说明（README.md）",
+                "依赖清单（requirements.txt）",
+                "键盘快捷键",
+                "标签.md",
+            ],
         )
 
         with patch("src.ui.main_window.ProjectDocumentDialog") as document_class:
@@ -509,7 +518,12 @@ class TestLanguageSwitch(unittest.TestCase):
                 for action in window.explorer_menu.actions()
                 if not action.isSeparator()
             ],
-            ["README.md", "requirements.txt", "Labels"],
+            [
+                "README.md",
+                "requirements.txt",
+                "Keyboard shortcuts",
+                "Label.md",
+            ],
         )
 
     def test_translation_replacement_does_not_corrupt_english_compounds(self):
@@ -518,6 +532,21 @@ class TestLanguageSwitch(unittest.TestCase):
             "控制工具栏",
         )
         self.assertEqual(translate_text("Toolbar", "zh"), "Toolbar")
+
+    def test_language_translation_preserves_combo_item_data(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        combo = QComboBox(window)
+        combo.addItem("South", "SOUTH")
+        window.language_controller.install(combo)
+        window.language_controller.set_language("zh")
+
+        self.assertEqual(combo.itemText(0), "南")
+        self.assertEqual(combo.itemData(0), "SOUTH")
+
+        combo.addItem("North", "NORTH")
+        self.assertEqual(combo.itemText(1), "北")
+        self.assertEqual(combo.itemData(1), "NORTH")
 
     def test_checkable_controls_have_readable_indicators(self):
         window = MainWindow()
@@ -564,6 +593,45 @@ class TestLanguageSwitch(unittest.TestCase):
         window.language_controller.set_language("zh")
 
         self.assertEqual(window.btn_test_mode.text(), "练习构建")
+
+    def test_language_switch_keeps_card_positions_stable(self):
+        window = MainWindow()
+        self.addCleanup(window.close)
+        table = window.table_view
+        board = Board(
+            id=1,
+            case_id=1,
+            board_configuration_id=1,
+            south_hand_pbn="T98.765.AKQJ.T98",
+            west_hand_pbn="765.432.432.AKQJ",
+            north_hand_pbn="AKQJ.T98.765.432",
+            east_hand_pbn="432.AKQJ.T98.765",
+        )
+        configuration = BoardConfiguration(
+            id=1,
+            dealer="SOUTH",
+            vulnerability="NONE",
+        )
+        table.load_board(board, configuration)
+        window.show()
+        self.application.processEvents()
+
+        def card_positions():
+            return {
+                (seat, index): card.mapTo(
+                    table,
+                    card.rect().topLeft(),
+                )
+                for seat, hand in table.hand_widgets.items()
+                for index, card in enumerate(hand.cards)
+            }
+
+        positions_english = card_positions()
+        window.set_language("zh")
+        self.application.processEvents()
+        positions_chinese = card_positions()
+
+        self.assertEqual(positions_chinese, positions_english)
 
     def test_dynamic_login_welcome_message_translates(self):
         message = "Welcome back, administrator [teacher]!\nAdvanced access is active."

@@ -259,6 +259,8 @@ class TestAdminRegistration(unittest.TestCase):
         other_index = dialog.admin_combo.findData(other_admin_id)
         self.assertGreaterEqual(other_index, 0)
         dialog.admin_combo.setCurrentIndex(other_index)
+        self.assertEqual(dialog.asset_count_labels["folders"].text(), "1")
+        self.assertEqual(dialog.asset_count_labels["labels"].text(), "1")
         self.assertEqual(
             self.repo.get_administrator_asset_counts(other_admin_id),
             {
@@ -384,6 +386,16 @@ class TestAdminRegistration(unittest.TestCase):
             duplicate_button.width(),
             duplicate_button.sizeHint().width(),
         )
+        buttons = (
+            window.btn_add_asset,
+            window.btn_edit_asset,
+            window.btn_delete_asset,
+            duplicate_button,
+        )
+        widths = [button.width() for button in buttons]
+        heights = [button.height() for button in buttons]
+        self.assertLessEqual(max(widths) - min(widths), 1)
+        self.assertEqual(len(set(heights)), 1)
 
     def test_tree_controls_and_zoom_are_scoped_to_their_own_tree(self):
         first_window = MainWindow()

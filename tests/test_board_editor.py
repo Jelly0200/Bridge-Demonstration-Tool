@@ -9,6 +9,7 @@ from src.core.pbn_parser import PbnParser
 from src.database.db_manager import DatabaseManager
 from src.database.repository import Repository
 from src.ui.dialogs.board_editor import BoardEditorDialog
+from src.ui.i18n import BilingualTextController
 
 
 HANDS = {
@@ -90,6 +91,49 @@ class TestBoardEditor(unittest.TestCase):
         board = self.repo.get_board_by_id(dialog.saved_board_id)
         self.assertIsNotNone(board)
         self.assertEqual(board.case_id, self.case_id)
+        self.assertEqual(
+            {
+                "SOUTH": board.south_hand_pbn,
+                "WEST": board.west_hand_pbn,
+                "NORTH": board.north_hand_pbn,
+                "EAST": board.east_hand_pbn,
+            },
+            HANDS,
+        )
+
+    def test_chinese_language_changes_labels_but_preserves_saved_board_values(self):
+        dialog = BoardEditorDialog(case_id=self.case_id)
+        self.addCleanup(dialog.close)
+        language_controller = BilingualTextController()
+        language_controller.install(dialog)
+        language_controller.set_language("zh")
+        dialog.tabs.setCurrentIndex(1)
+
+        for seat, hand in HANDS.items():
+            dialog.selected_seat_combo.setCurrentIndex(
+                dialog.selected_seat_combo.findData(seat)
+            )
+            for suit, ranks in PbnParser.parse_hand(hand).items():
+                for rank in ranks:
+                    dialog.card_buttons[f"{suit}{rank}"].click()
+
+        dialog.dealer_combo.setCurrentIndex(dialog.dealer_combo.findData("WEST"))
+        dialog.vulnerability_combo.setCurrentIndex(
+            dialog.vulnerability_combo.findData("NS")
+        )
+        self.assertEqual(dialog.selected_seat_combo.currentText(), "东")
+        self.assertEqual(dialog.dealer_combo.currentData(), "WEST")
+        self.assertEqual(dialog.vulnerability_combo.currentText(), "南北")
+
+        with patch("src.ui.dialogs.board_editor.QMessageBox.information"):
+            dialog.save_board()
+
+        board = self.repo.get_board_by_id(dialog.saved_board_id)
+        configuration = self.repo.get_board_configuration(
+            board.board_configuration_id
+        )
+        self.assertEqual(configuration.dealer, "WEST")
+        self.assertEqual(configuration.vulnerability, "NS")
         self.assertEqual(
             {
                 "SOUTH": board.south_hand_pbn,

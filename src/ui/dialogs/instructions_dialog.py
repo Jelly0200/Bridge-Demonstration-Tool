@@ -43,8 +43,8 @@ stored locally in SQLite.
   **Administrator**, **Tool**, **Test**, and **Explorer** menus for account,
   application, test, and project-document actions. Use **Explorer** to read
   `README.md` and `requirements.txt`; asset actions remain in the asset tree.
-- **Tool > Language** opens a choice dialog before changing the interface
-  language. **Tool > Keyboard shortcuts** opens a reference for the available
+- **Preference > Language** offers English and Chinese choices. **Explorer >
+  Keyboard shortcuts** opens a reference for the available
   keyboard and context-menu shortcuts.
 - **Administrator > Export administrator data** saves this administrator's
   workspace as one encrypted `.bdtpack` file. Choose and confirm a separate
@@ -233,7 +233,7 @@ DDS values are shown separately and are not translated.
   不会覆盖现有资源。与导出测试关联的学生账户、分配记录和成绩也会包含在文件中；
   管理员登录凭证不会导出。
 - “资源管理器”用于查看 `README.md` 和 `requirements.txt`；资源树中的添加、编辑、删除和复制操作仍在资源树中进行。
-- “工具 > 语言”会先打开语言选择窗口；“工具 > 键盘快捷键”会打开快捷键说明窗口。
+- “偏好设置 > 语言”可直接选择 English 或中文；“资源管理器 > 键盘快捷键”会打开快捷键说明窗口。
   “工具 > 机器人出牌音效”可切换演示中的机器人出牌音效。
 - “测试 > 学生管理”可由管理员注册学生账户、分配或移除测试、更改学生密码或永久删除账户；删除账户也会删除该学生的测试分配和成绩记录。“管理员 > 学生登录”会自动启动学生锁定会话。“测试 > 查看测试结果”可查看提交记录；“测试 > 生成测试报告”可汇总成绩、题目表现和场景难度、列出前三名并导出 PDF。
 - 中文界面下，“资源管理器 > 项目说明（README.md）”会打开中文说明；菜单仍只保留一个项目说明入口。

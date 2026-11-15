@@ -107,7 +107,8 @@ class BoardEditorDialog(QDialog):
         )
         assignment_layout = QHBoxLayout()
         self.selected_seat_combo = QComboBox()
-        self.selected_seat_combo.addItems(self.SEATS)
+        for seat in self.SEATS:
+            self.selected_seat_combo.addItem(seat, seat)
         self.selected_seat_combo.currentTextChanged.connect(
             self._refresh_picker_buttons
         )
@@ -169,9 +170,11 @@ class BoardEditorDialog(QDialog):
         layout.addWidget(self.tabs)
 
         self.dealer_combo = QComboBox()
-        self.dealer_combo.addItems(self.SEATS)
+        for seat in self.SEATS:
+            self.dealer_combo.addItem(seat, seat)
         self.vulnerability_combo = QComboBox()
-        self.vulnerability_combo.addItems(["NONE", "NS", "EW", "BOTH"])
+        for vulnerability in ("NONE", "NS", "EW", "BOTH"):
+            self.vulnerability_combo.addItem(vulnerability, vulnerability)
         self.description_input = QLineEdit()
         details = QFormLayout()
         details.addRow("Dealer:", self.dealer_combo)
@@ -338,7 +341,7 @@ class BoardEditorDialog(QDialog):
         )
 
     def _refresh_picker_buttons(self, *_args):
-        selected_seat = self.selected_seat_combo.currentText()
+        selected_seat = self.selected_seat_combo.currentData()
         counts = {seat: 0 for seat in self.SEATS}
         for code, button in self.card_buttons.items():
             assigned_seat = self.card_assignments.get(code)
@@ -376,7 +379,7 @@ class BoardEditorDialog(QDialog):
             )
 
     def _toggle_card(self, card_code: str):
-        selected_seat = self.selected_seat_combo.currentText()
+        selected_seat = self.selected_seat_combo.currentData()
         if self.card_assignments.get(card_code) == selected_seat:
             del self.card_assignments[card_code]
         else:
@@ -497,8 +500,8 @@ class BoardEditorDialog(QDialog):
             self.saved_board_id = self.repo.save_board(
                 case_id=self.case_id,
                 hands=hands,
-                dealer=self.dealer_combo.currentText(),
-                vulnerability=self.vulnerability_combo.currentText(),
+                dealer=self.dealer_combo.currentData(),
+                vulnerability=self.vulnerability_combo.currentData(),
                 description=self.description_input.text().strip() or None,
                 board_id=self.board.id if self.board else None,
             )

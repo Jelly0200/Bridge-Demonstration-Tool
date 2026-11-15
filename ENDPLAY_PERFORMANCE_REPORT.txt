@@ -1,0 +1,36 @@
+DDS3 vs Endplay: Local Performance Comparison
+=============================================
+
+Environment
+-----------
+- macOS 26.6, Apple Silicon (arm64)
+- CPython 3.14.8
+- 40 deterministic, unique deals per workload
+- Endplay 0.5.12 was installed from source for this local run. The normal
+  requirements marker does not install Endplay on this Python/platform
+  combination.
+
+Results
+-------
+Times are milliseconds; each cell is median / 95th percentile.
+
+Workload                                  DDS3             Endplay
+Double-dummy trick table                  57.241 / 254.401 55.209 / 268.870
+Opening-lead solve                        25.974 / 123.229 24.597 / 120.394
+Solve with two cards in the current trick   3.571 / 28.428   3.389 / 26.980
+
+Correctness
+-----------
+All calculated double-dummy tables matched. For card-solving workloads, the
+normalized legal-card-to-trick-count results also matched.
+
+Interpretation and limitations
+------------------------------
+The median timings were close: Endplay was about 4-6% faster in these runs,
+while the 95th-percentile results varied by workload. Both providers use the
+native C++ DDS solver, so this small local sample does not establish a general
+performance advantage for either provider.
+
+This is a single-machine benchmark with 40 deals per workload. Results can
+vary with hardware, operating system, Python build, native library build,
+solver settings, and system load. It is not a Windows performance measurement.
